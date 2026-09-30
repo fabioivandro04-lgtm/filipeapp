@@ -1,5 +1,5 @@
 #!/bin/bash
-# Arranque da Filipe App no Mac: duplo clique, ou "bash start.command"
+# Arranque da GESTAO APP no Mac: duplo clique, ou "bash start.command"
 cd "$(dirname "$0")"
 
 if ! command -v node >/dev/null 2>&1; then
