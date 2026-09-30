@@ -2,7 +2,9 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { query, queryOne, CATEGORIAS } from "@/lib/db";
+import { cookies } from "next/headers";
 import { login, logout, requireUser } from "@/lib/auth";
+import { hashPassword, verifyPassword } from "@/lib/password";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
@@ -10,6 +12,23 @@ export async function entrar(_: string | null, form: FormData): Promise<string |
   if (ok === "bloqueado") return "Demasiadas tentativas. Tente novamente dentro de 15 minutos.";
   if (!ok) return "Email ou palavra-passe incorretos.";
   redirect("/");
+}
+
+export type ResultadoConta = { ok?: boolean; erro?: string };
+
+export async function alterarSenha(_: ResultadoConta | null, form: FormData): Promise<ResultadoConta> {
+  const u = await requireUser();
+  const atual = String(form.get("atual") ?? "");
+  const nova = String(form.get("nova") ?? "");
+  if (nova.length < 10) return { erro: "A nova palavra-passe deve ter pelo menos 10 caracteres." };
+  if (nova !== String(form.get("confirmar") ?? "")) return { erro: "As palavras-passe novas não coincidem." };
+  const row = await queryOne<{ password_hash: string }>("SELECT password_hash FROM users WHERE id = ?", [u.id]);
+  if (!row || !verifyPassword(atual, row.password_hash)) return { erro: "A palavra-passe atual está incorreta." };
+  await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(nova), u.id]);
+  // Termina as outras sessões deste utilizador (fica só a atual)
+  const token = (await cookies()).get("session")?.value ?? "";
+  await query("DELETE FROM sessions WHERE user_id = ? AND token <> ?", [u.id, token]);
+  return { ok: true };
 }
 
 export async function sair() {

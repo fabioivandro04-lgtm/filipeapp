@@ -26,10 +26,10 @@ export default function Nav({ user }: { user: User }) {
           </nav>
           <div className="ml-auto flex items-center gap-3">
             <Link href="/upload" className="btn-primary hidden md:inline-flex">+ Carregar faturas</Link>
-            <div className="text-right leading-tight">
+            <Link href="/conta" title="Alterar palavra-passe" className="text-right leading-tight hover:opacity-70">
               <p className="text-sm font-medium">{user.nome}</p>
               <p className="text-xs text-slate-500">{user.cargo}</p>
-            </div>
+            </Link>
             <form action={sair}><button className="btn-ghost px-3 py-1.5">Sair</button></form>
           </div>
         </div>
