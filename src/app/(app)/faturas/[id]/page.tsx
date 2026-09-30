@@ -1,29 +1,31 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { obterFatura, todasEmpresas, todasMaquinas, todosPredios } from "@/lib/queries";
+import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, todasMaquinas, todosPredios } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/categorias";
 import { money } from "@/lib/format";
-import { apagarFatura, guardarFatura } from "@/app/actions";
+import { aceitarProposta, apagarFatura, guardarFatura, rejeitarProposta } from "@/app/actions";
+import { editaDireto } from "@/lib/auth";
+import DiffLista from "@/components/Diff";
 import { listarHistorico } from "@/lib/historico";
 import HistoricoLista from "@/components/HistoricoLista";
 import { PageHeader } from "@/components/Ui";
 
 type Item = { descricao: string; quantidade: number | null; preco_unitario: number | null; total: number | null };
 
-export default async function FaturaPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function FaturaPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const user = await requireUser();
   const { id } = await params;
+  const sp = await searchParams;
   const f = await obterFatura(user, Number(id));
   if (!f) notFound();
-  const podeEditar = user.cargo === "admin" || user.cargo === "operador";
+  const direto = editaDireto(user); // admin/operador editam; o contabilista propõe e o admin aceita
   const itens: Item[] = f.itens ? JSON.parse(f.itens) : [];
-  const [predios, maquinas, empresas, registos] = await Promise.all([todosPredios(), todasMaquinas(), todasEmpresas(), listarHistorico({ faturaId: f.id, limite: 50 })]);
-  const nomes = {
-    empresas: Object.fromEntries(empresas.map((e) => [e.id, e.nome])),
-    predios: Object.fromEntries(predios.map((p) => [p.id, p.nome])),
-    maquinas: Object.fromEntries(maquinas.map((m) => [m.id, m.numero_interno])),
-  };
+  const [predios, maquinas, empresas, registos, nomes, propostas] = await Promise.all([
+    todosPredios(), todasMaquinas(), todasEmpresas(), listarHistorico({ faturaId: f.id, limite: 50 }), carregarNomes(),
+    listarPropostas({ faturaId: f.id, estado: ["pendente"] }),
+  ]);
+  const minha = propostas.find((p) => p.user_id === user.id);
   const pdf = f.ficheiro_mime === "application/pdf";
 
   return (
@@ -33,6 +35,28 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
           {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>✓ QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
           {f.enviada_em && <span className="badge bg-sky-100 text-sky-800">Enviada à contabilidade</span>}
         </PageHeader></div>
+
+      {sp.ok && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{sp.ok}</p>}
+      {sp.erro && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sp.erro}</p>}
+
+      {propostas.map((p) => (
+        <div key={p.id} className="mb-4 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm">
+          <p className="font-medium text-sky-900">
+            {p.user_id === user.id ? "A sua proposta está à espera de aprovação" : `Proposta de ${p.user_nome} à espera de aprovação`}
+            <span className="ml-2 font-normal text-sky-700">{p.criado_em.slice(0, 16)}</span>
+          </p>
+          <div className="mt-2"><DiffLista diff={JSON.parse(p.alteracoes)} nomes={nomes} /></div>
+          {user.cargo === "admin" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <form action={aceitarProposta.bind(null, p.id)}><button className="btn-primary px-3 py-1.5">Aceitar</button></form>
+              <form action={rejeitarProposta.bind(null, p.id)} className="flex gap-2">
+                <input name="motivo" placeholder="Motivo (opcional)" className="field py-1.5" />
+                <button className="btn-ghost px-3 py-1.5">Rejeitar</button>
+              </form>
+            </div>
+          )}
+        </div>
+      ))}
 
       {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">⚠ {f.alerta}</p>}
 
@@ -47,7 +71,7 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
 
         <div className="space-y-6">
           <form action={guardarFatura.bind(null, f.id)} className="card space-y-4 p-5">
-            <fieldset disabled={!podeEditar} className="grid grid-cols-2 gap-4">
+            <fieldset className="grid grid-cols-2 gap-4">
               <Campo nome="fornecedor" rotulo="Fornecedor" v={f.fornecedor} span />
               <Campo nome="nif" rotulo="NIF" v={f.nif_fornecedor} />
               <Campo nome="numero" rotulo="Nº da fatura" v={f.numero} />
@@ -81,21 +105,30 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
               </div>
               <Campo nome="identificador" rotulo="Nº contador / cliente" v={f.identificador} span />
               <Campo nome="nif_adquirente" rotulo="NIF do cliente (a sua empresa)" v={f.nif_adquirente} span />
-              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
-                <input type="checkbox" name="memorizar_empresa" defaultChecked className="h-4 w-4" />
-                Memorizar este NIF na empresa escolhida (as próximas faturas ligam-se sozinhas)
-              </label>
-              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
-                <input type="checkbox" name="memorizar" defaultChecked className="h-4 w-4" />
-                Memorizar este nº no prédio escolhido (liga as próximas faturas sozinho)
-              </label>
+              {direto && (
+                <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" name="memorizar_empresa" defaultChecked className="h-4 w-4" />
+                  Memorizar este NIF na empresa escolhida (as próximas faturas ligam-se sozinhas)
+                </label>
+              )}
+              {direto && (
+                <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" name="memorizar" defaultChecked className="h-4 w-4" />
+                  Memorizar este nº no prédio escolhido (liga as próximas faturas sozinho)
+                </label>
+              )}
               <label className="col-span-2 flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" name="revisada" defaultChecked={!!f.revisada} className="h-4 w-4" /> Marcar como revista
               </label>
             </fieldset>
-            {podeEditar
-              ? <button className="btn-primary w-full">Guardar</button>
-              : <p className="text-sm text-slate-500">O seu cargo só permite consultar.</p>}
+            {direto ? (
+              <button className="btn-primary w-full">Guardar</button>
+            ) : (
+              <>
+                <button className="btn-primary w-full">{minha ? "Atualizar a minha proposta" : "Propor alteração"}</button>
+                <p className="text-xs text-slate-500">As alterações não mudam a fatura já: ficam como proposta e só entram em vigor quando um administrador as aceitar.</p>
+              </>
+            )}
           </form>
 
           {itens.length > 0 && (
@@ -120,7 +153,7 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
       </div>
 
       <h2 className="mb-3 mt-10 text-lg font-semibold">Histórico desta fatura</h2>
-      <HistoricoLista registos={registos} nomes={nomes} podeDesfazer={podeEditar} mostrarFatura={false} />
+      <HistoricoLista registos={registos} nomes={nomes} podeDesfazer={direto} mostrarFatura={false} />
     </>
   );
 }

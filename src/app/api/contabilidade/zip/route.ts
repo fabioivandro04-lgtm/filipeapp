@@ -5,7 +5,7 @@ import { respostaZip } from "@/lib/zip";
 
 export async function GET(req: Request) {
   const u = await getUser();
-  if (!u || (u.cargo !== "admin" && u.cargo !== "operador")) return new Response("Sem permissão", { status: 403 });
+  if (!u) return new Response("Não autenticado", { status: 401 }); // todos os cargos podem descarregar o pacote
   const sp = new URL(req.url).searchParams;
   const filtro = lerFiltro({ mes: sp.get("mes"), empresa: sp.get("empresa"), estado: sp.get("estado") });
   const faturas = await faturasDoPacote(u, filtro);

@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { query, queryOne, CATEGORIAS, CARGOS } from "@/lib/db";
 import { cookies } from "next/headers";
-import { login, logout, requireUser } from "@/lib/auth";
+import { editaDireto, login, logout, requireUser } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { avaliar } from "@/lib/alertas";
 import { lerQrFiscal } from "@/lib/qr";
@@ -12,6 +12,7 @@ import { emailConfigurado, enviarEmail, type Anexo } from "@/lib/email";
 import { excelFaturas, nomeFicheiro } from "@/lib/excel";
 import { guardarConfig } from "@/lib/config";
 import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
+import { nifValido } from "@/lib/nif";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
@@ -58,6 +59,7 @@ async function obterEmpresaId(nome: string | null): Promise<number | null> {
 /** Guarda e lê UMA fatura. O browser chama-a uma vez por ficheiro. */
 export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   const user = await requireUser();
+  if (!editaDireto(user)) return { erro: "O seu cargo não permite carregar faturas." };
   const file = form.get("ficheiro");
   if (!(file instanceof File) || file.size === 0) return { erro: "Ficheiro em falta." };
   if (!MIMES.has(file.type)) return { erro: `Tipo de ficheiro não suportado: ${file.name}` };
@@ -138,40 +140,71 @@ const num = (v: FormDataEntryValue | null) => {
 };
 const txt = (v: FormDataEntryValue | null) => String(v ?? "").trim() || null;
 
+/** Quem edita diretamente (admin e operador). O contabilista só propõe alterações. */
 async function podeEditar() {
   const u = await requireUser();
-  return u.cargo === "admin" || u.cargo === "operador" ? u : null;
+  return editaDireto(u) ? u : null;
 }
 
-export async function guardarFatura(id: number, form: FormData) {
-  const user = await podeEditar();
-  if (!user) return;
-  const antes = await queryOne<Record<string, unknown>>("SELECT * FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
-  if (!antes) return;
-  const empresaId = await obterEmpresaId(txt(form.get("empresa")));
-  const predioId = num(form.get("predio_id"));
-  const identificador = txt(form.get("identificador"));
-  const nifAdquirente = txt(form.get("nif_adquirente"));
-  const revisada = form.get("revisada") ? 1 : 0;
-  const depois = {
-    fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
-    total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
-    predio_id: predioId, maquina_id: num(form.get("maquina_id")), identificador, nif_adquirente: nifAdquirente, revisada,
-  };
+type Campos = Record<(typeof CAMPOS_EDITAVEIS)[number], unknown>;
+
+/** Aplica os campos a uma fatura (recalcula avisos, regista no histórico). Usado na edição direta e ao aceitar uma proposta. */
+async function aplicarCampos(user: { id: number }, id: number, antes: Record<string, unknown>, depois: Campos) {
+  const revisada = depois.revisada ? 1 : 0;
   // Ao guardar, os avisos são recalculados (marcar como revista limpa-os)
   const avisos = revisada ? [] : await avaliar({
-    fornecedor: depois.fornecedor, nif: depois.nif_fornecedor, numero: depois.numero, data: depois.data,
-    total: depois.total, categoria: depois.categoria, excluirId: id, predioId, atcud: (antes.atcud as string | null) ?? null,
+    fornecedor: depois.fornecedor as string | null, nif: depois.nif_fornecedor as string | null, numero: depois.numero as string | null,
+    data: depois.data as string | null, total: depois.total as number | null, categoria: String(depois.categoria),
+    excluirId: id, predioId: depois.predio_id as number | null, atcud: (antes.atcud as string | null) ?? null,
   });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,
        predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, alerta=? WHERE id=?`,
-    [depois.fornecedor, depois.nif_fornecedor, depois.numero, depois.data, depois.total, depois.iva, depois.categoria, empresaId,
-      predioId, depois.maquina_id, identificador, nifAdquirente, revisada, avisos.length ? avisos.join(" ") : null, id],
+    [depois.fornecedor, depois.nif_fornecedor, depois.numero, depois.data, depois.total, depois.iva, depois.categoria, depois.empresa_id,
+      depois.predio_id, depois.maquina_id, depois.identificador, depois.nif_adquirente, revisada, avisos.length ? avisos.join(" ") : null, id],
   );
   const mudou = diferencas(antes, depois);
   if (Object.keys(mudou).length) await registar(user, id, "editada", mudou);
+}
 
+export async function guardarFatura(id: number, form: FormData) {
+  const user = await requireUser();
+  const direto = editaDireto(user);
+  if (!direto && user.cargo !== "contabilista") return;
+  const antes = await queryOne<Record<string, unknown>>("SELECT * FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!antes) return;
+
+  const volta = (tipo: "ok" | "erro", msg: string): never => redirect(`/faturas/${id}?${tipo}=${encodeURIComponent(msg)}`);
+  const nomeEmpresa = txt(form.get("empresa"));
+  let empresaId: number | null = null;
+  if (direto) empresaId = await obterEmpresaId(nomeEmpresa);
+  else if (nomeEmpresa) {
+    // Uma proposta não cria empresas: só usa as que já existem
+    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE LOWER(nome) = LOWER(?)", [nomeEmpresa]))?.id ?? null;
+    if (!empresaId) volta("erro", `A empresa «${nomeEmpresa}» não existe. Peça a um administrador para a criar em Empresas.`);
+  }
+
+  const predioId = num(form.get("predio_id"));
+  const identificador = txt(form.get("identificador"));
+  const nifAdquirente = txt(form.get("nif_adquirente"));
+  const depois: Campos = {
+    fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
+    total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
+    predio_id: predioId, maquina_id: num(form.get("maquina_id")), identificador, nif_adquirente: nifAdquirente, revisada: form.get("revisada") ? 1 : 0,
+  };
+
+  if (!direto) {
+    // Contabilista: fica registada uma proposta; a fatura não muda até um admin aceitar
+    const mudou = diferencas(antes, depois);
+    if (!Object.keys(mudou).length) volta("ok", "Não há alterações para propor.");
+    await query("UPDATE propostas SET estado = 'substituida' WHERE fatura_id = ? AND user_id = ? AND estado = 'pendente'", [id, user.id]);
+    await query("INSERT INTO propostas (fatura_id, user_id, alteracoes) VALUES (?,?,?)", [id, user.id, JSON.stringify(mudou)]);
+    await registar(user, id, "proposta", mudou);
+    revalidatePath("/", "layout");
+    volta("ok", "Proposta enviada. As alterações só entram em vigor quando um administrador as aceitar.");
+  }
+
+  await aplicarCampos(user, id, antes, depois);
   // Memoriza para ligar automaticamente as próximas faturas
   if (form.get("memorizar") && predioId && identificador)
     await query("UPDATE predios SET codigo_contador = ? WHERE id = ? AND codigo_contador IS NULL", [identificador, predioId]);
@@ -179,6 +212,47 @@ export async function guardarFatura(id: number, form: FormData) {
     await query("UPDATE empresas SET nif = ? WHERE id = ? AND nif IS NULL AND NOT EXISTS (SELECT 1 FROM empresas e2 WHERE e2.nif = ?)", [nifAdquirente, empresaId, nifAdquirente]);
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+// ---------- Aprovação das propostas (só admin) ----------
+async function propostaPendente(id: number) {
+  const eu = await requireUser();
+  if (eu.cargo !== "admin") redirect("/");
+  const p = await queryOne<{ id: number; fatura_id: number; user_id: number; alteracoes: string }>(
+    "SELECT id, fatura_id, user_id, alteracoes FROM propostas WHERE id = ? AND estado = 'pendente'", [id]);
+  return { eu, p };
+}
+const voltarAprovacoes = (tipo: "ok" | "erro", msg: string): never => redirect(`/aprovacoes?${tipo}=${encodeURIComponent(msg)}`);
+
+export async function aceitarProposta(id: number) {
+  const { eu, p } = await propostaPendente(id);
+  if (!p) voltarAprovacoes("erro", "Esta proposta já foi decidida ou deixou de existir.");
+  const antes = await queryOne<Record<string, unknown>>("SELECT * FROM faturas WHERE id = ? AND apagada_em IS NULL", [p!.fatura_id]);
+  const autor = (await queryOne<{ nome: string }>("SELECT nome FROM users WHERE id = ?", [p!.user_id]))?.nome ?? "?";
+  if (!antes) {
+    await query("UPDATE propostas SET estado='rejeitada', decidido_por=?, decidido_em=to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'), motivo='A fatura foi apagada.' WHERE id=?", [eu.id, id]);
+    voltarAprovacoes("erro", "A fatura já foi apagada; a proposta foi encerrada.");
+  }
+  // Valores atuais + o que foi proposto (só os campos que a proposta mudou)
+  const depois = Object.fromEntries(CAMPOS_EDITAVEIS.map((c) => [c, antes![c] ?? null])) as Campos;
+  for (const [campo, [, novo]] of Object.entries(JSON.parse(p!.alteracoes) as Diferencas))
+    if ((CAMPOS_EDITAVEIS as readonly string[]).includes(campo)) depois[campo as keyof Campos] = novo;
+  await aplicarCampos(eu, p!.fatura_id, antes!, depois);
+  await query("UPDATE propostas SET estado='aceite', decidido_por=?, decidido_em=to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS') WHERE id=?", [eu.id, id]);
+  await registar(eu, p!.fatura_id, "proposta_aceite", { proposta: id, autor });
+  revalidatePath("/", "layout");
+  voltarAprovacoes("ok", `Proposta de ${autor} aceite: a fatura foi atualizada.`);
+}
+
+export async function rejeitarProposta(id: number, form: FormData) {
+  const { eu, p } = await propostaPendente(id);
+  if (!p) voltarAprovacoes("erro", "Esta proposta já foi decidida ou deixou de existir.");
+  const motivo = txt(form.get("motivo"));
+  const autor = (await queryOne<{ nome: string }>("SELECT nome FROM users WHERE id = ?", [p!.user_id]))?.nome ?? "?";
+  await query("UPDATE propostas SET estado='rejeitada', decidido_por=?, decidido_em=to_char(now() AT TIME ZONE 'UTC','YYYY-MM-DD HH24:MI:SS'), motivo=? WHERE id=?", [eu.id, motivo, id]);
+  await registar(eu, p!.fatura_id, "proposta_rejeitada", { proposta: id, autor, motivo });
+  revalidatePath("/", "layout");
+  voltarAprovacoes("ok", `Proposta de ${autor} rejeitada.`);
 }
 
 /** «Apagar» é recuperável: a fatura e o ficheiro ficam guardados e o admin pode restaurar no Histórico. */
@@ -308,11 +382,16 @@ export async function guardarEmpresa(id: number | null, form: FormData) {
   if (u.cargo !== "admin") redirect("/");
   const nome = String(form.get("nome") ?? "").trim();
   const nif = String(form.get("nif") ?? "").replace(/\s/g, "") || null;
+  const morada = txt(form.get("morada"));
+  const cp = txt(form.get("codigo_postal"));
+  const localidade = txt(form.get("localidade"));
   if (!nome) voltarEmpresas("erro", "Escreva o nome da empresa.");
   if (nif && !/^\d{9}$/.test(nif)) voltarEmpresas("erro", "O NIF deve ter 9 números.");
+  if (nif && !nifValido(nif)) voltarEmpresas("erro", `O NIF ${nif} não é válido (o último dígito, de controlo, não bate certo). Confirme o número.`);
+  if (cp && !/^\d{4}-\d{3}$/.test(cp)) voltarEmpresas("erro", "O código postal deve ter o formato 0000-000.");
   try {
-    if (id) await query("UPDATE empresas SET nome = ?, nif = ? WHERE id = ?", [nome, nif, id]);
-    else await query("INSERT INTO empresas (nome, nif) VALUES (?, ?)", [nome, nif]);
+    if (id) await query("UPDATE empresas SET nome = ?, nif = ?, morada = ?, codigo_postal = ?, localidade = ? WHERE id = ?", [nome, nif, morada, cp, localidade, id]);
+    else await query("INSERT INTO empresas (nome, nif, morada, codigo_postal, localidade) VALUES (?, ?, ?, ?, ?)", [nome, nif, morada, cp, localidade]);
   } catch {
     voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF.");
   }

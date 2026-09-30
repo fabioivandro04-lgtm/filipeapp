@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { query, queryOne, type Cargo, type Categoria } from "./db";
+import { query, queryOne, type Cargo } from "./db";
 import { verifyPassword } from "./password";
 
 const COOKIE = "session";
@@ -56,8 +56,6 @@ export async function requireUser(): Promise<User> {
   return u;
 }
 
-/** Categorias que o utilizador pode ver: admin e operador vêem tudo; os restantes cargos só a sua categoria. */
-export function categoriasVisiveis(u: User): Categoria[] | "todas" {
-  if (u.cargo === "admin" || u.cargo === "operador") return "todas";
-  return [u.cargo as Categoria];
-}
+/** Admin e operador editam diretamente; o contabilista só propõe alterações. */
+export const editaDireto = (u: Pick<User, "cargo">) => u.cargo === "admin" || u.cargo === "operador";
+export const eAdmin = (u: Pick<User, "cargo">) => u.cargo === "admin";

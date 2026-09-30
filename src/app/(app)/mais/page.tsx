@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { extras, PRINCIPAL } from "@/lib/menu";
+import { contarPropostasPendentes } from "@/lib/queries";
 import { PageHeader } from "@/components/Ui";
 
 export default async function Mais() {
   const user = await requireUser();
-  const links = [...PRINCIPAL.slice(3), ...extras(user)]; // Relatórios, Alertas e o resto
+  const pendentes = user.cargo === "admin" ? await contarPropostasPendentes() : 0;
+  const links = [...PRINCIPAL.slice(3), ...extras(user, pendentes)]; // Relatórios, Alertas e o resto
   return (
     <>
       <PageHeader titulo="Mais" />

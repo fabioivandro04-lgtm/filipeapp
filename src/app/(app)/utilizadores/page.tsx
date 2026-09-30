@@ -2,11 +2,11 @@ import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { todosUtilizadores } from "@/lib/queries";
 import { CARGOS } from "@/lib/db";
-import { CATEGORIA_INFO } from "@/lib/format";
 import { alternarAtivo, atualizarCargo, criarUtilizador, redefinirSenha } from "@/app/actions";
 import { PageHeader } from "@/components/Ui";
 
-const cargoNome = (c: string) => (c === "admin" ? "Administrador" : c === "operador" ? "Operador (carrega e edita)" : `Só vê: ${CATEGORIA_INFO[c]?.nome ?? c}`);
+const cargoNome = (c: string) =>
+  c === "admin" ? "Administrador (faz tudo)" : c === "operador" ? "Operador (carrega e edita)" : "Contabilista (propõe edições; o admin aceita)";
 
 export default async function Utilizadores({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const eu = await requireUser();

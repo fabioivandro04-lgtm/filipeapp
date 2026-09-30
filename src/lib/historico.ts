@@ -29,6 +29,9 @@ export async function registar(u: Pick<User, "id"> | null, faturaId: number | nu
     [u?.id ?? null, faturaId, acao, detalhe === undefined ? null : JSON.stringify(detalhe)]);
 }
 
+/** Mudanças que ainda não estão em vigor (proposta) contam como diferenças, mas não podem ser desfeitas. */
+export const ACOES_COM_DIFERENCAS = ["editada", "proposta"] as const;
+
 export type Registo = {
   id: number; quando: string; user_nome: string | null; fatura_id: number | null; acao: string; detalhe: string | null;
   fatura_apagada: string | null; fatura_fornecedor: string | null; fatura_numero: string | null;

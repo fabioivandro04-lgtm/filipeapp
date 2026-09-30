@@ -11,15 +11,17 @@ export const PRINCIPAL: ItemMenu[] = [
   { href: "/alertas", nome: "Alertas", desc: "Duplicados, valores estranhos e meses em falta", icon: "⚠️" },
 ];
 
-/** Restantes páginas, conforme o cargo. */
-export function extras(u: User): ItemMenu[] {
+/** Restantes páginas, conforme o cargo. `pendentes` = propostas à espera de decisão (só conta para o admin). */
+export function extras(u: User, pendentes = 0): ItemMenu[] {
   const admin = u.cargo === "admin";
-  const edita = admin || u.cargo === "operador";
   return [
-    ...(edita ? [{ href: "/contabilidade", nome: "Contabilidade", desc: "Enviar as faturas do mês à contabilista", icon: "📨" }] : []),
+    { href: "/contabilidade", nome: "Contabilidade", desc: "Pacote do mês para a contabilista (Excel + originais)", icon: "📨" },
+    ...(admin
+      ? [{ href: "/aprovacoes", nome: pendentes ? `Aprovações (${pendentes})` : "Aprovações", desc: pendentes ? `${pendentes} alteração(ões) à espera de decisão` : "Alterações propostas pelos contabilistas", icon: "✅" }]
+      : u.cargo === "contabilista" ? [{ href: "/aprovacoes", nome: "As minhas propostas", desc: "Alterações à espera de um administrador", icon: "✅" }] : []),
     ...(admin ? [
-      { href: "/empresas", nome: "Empresas", desc: "Nomes e NIF das suas empresas", icon: "🏛️" },
-      { href: "/utilizadores", nome: "Utilizadores", desc: "Criar pessoas e definir o que veem", icon: "👥" },
+      { href: "/empresas", nome: "Empresas", desc: "Nome, NIF e morada das suas empresas", icon: "🏛️" },
+      { href: "/utilizadores", nome: "Utilizadores", desc: "Criar pessoas e definir o cargo", icon: "👥" },
       { href: "/historico", nome: "Histórico", desc: "Quem fez o quê, com opção de desfazer", icon: "🕘" },
       { href: "/copias", nome: "Cópia de segurança", desc: "Descarregar todos os dados e faturas", icon: "💾" },
     ] : []),

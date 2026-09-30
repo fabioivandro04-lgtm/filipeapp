@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { requireUser } from "@/lib/auth";
+import { editaDireto, requireUser } from "@/lib/auth";
 import { lerConfig } from "@/lib/config";
 import { faturasDoPacote, lerFiltro, paraQuery } from "@/lib/contabilidade";
 import { emailConfigurado } from "@/lib/email";
@@ -11,7 +10,6 @@ import { PageHeader, Stat } from "@/components/Ui";
 
 export default async function Contabilidade({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requireUser();
-  if (user.cargo !== "admin" && user.cargo !== "operador") redirect("/");
   const sp = await searchParams;
   const filtro = lerFiltro(sp);
   const [faturas, empresas, emailGuardado] = await Promise.all([faturasDoPacote(user, filtro), todasEmpresas(), lerConfig("email_contabilidade")]);
@@ -20,6 +18,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
   const porRever = faturas.filter((f) => f.alerta && !f.revisada).length;
   const semFicheiro = faturas.filter((f) => !f.ficheiro_id).length;
   const empresa = empresas.find((e) => e.id === filtro.empresaId);
+  const podeEnviar = editaDireto(user); // contabilista só descarrega
   const podeEmail = emailConfigurado();
   const mensagem = `Bom dia,\n\nSeguem em anexo as faturas de ${mesExtenso(filtro.mes)}${empresa ? ` da empresa ${empresa.nome}` : ""}: ${faturas.length} documentos, no total de ${money(total)}.\n\nO ficheiro Excel resume os dados e os originais (PDF/foto) mantêm o QR code fiscal.\n\nCumprimentos,\n${user.nome}`;
   const oculto = (
@@ -83,10 +82,10 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
             <h2 className="font-semibold">Descarregar e enviar você mesmo</h2>
             <p className="text-sm text-slate-500">Um ZIP com o Excel e a pasta «documentos» com os originais. Envie por email, WhatsApp ou como preferir.</p>
             <a href={`/api/contabilidade/zip?${paraQuery(filtro)}`} className="btn-primary w-full">Descarregar ZIP</a>
-            <form action={marcarEnviadas}>{oculto}<button className="btn-ghost w-full">Já enviei: marcar como enviadas</button></form>
+            {podeEnviar && <form action={marcarEnviadas}>{oculto}<button className="btn-ghost w-full">Já enviei: marcar como enviadas</button></form>}
           </div>
 
-          <form action={enviarContabilidade} className="card space-y-3 p-5">
+          {podeEnviar && <form action={enviarContabilidade} className="card space-y-3 p-5">
             {oculto}
             <h2 className="font-semibold">Enviar por email daqui</h2>
             <input name="para" defaultValue={emailGuardado ?? ""} placeholder="Email da contabilista" required className="field" />
@@ -99,7 +98,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
                 Com Gmail: <code>smtp.gmail.com</code>, porta <code>465</code> e uma «palavra-passe de aplicação».
               </p>
             )}
-          </form>
+          </form>}
         </div>
       )}
     </>

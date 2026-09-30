@@ -1,5 +1,6 @@
 import { query, queryOne, type Categoria } from "./db";
-import { categoriasVisiveis, type User } from "./auth";
+import type { User } from "./auth";
+import { CAMPOS_EDITAVEIS } from "./historico";
 
 export type FaturaRow = {
   id: number; criado_em: string; criado_por_nome: string; fornecedor: string | null; nif_fornecedor: string | null;
@@ -10,12 +11,9 @@ export type FaturaRow = {
   atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; enviada_em: string | null;
 };
 
-/** Condição SQL que limita as faturas às categorias que o cargo pode ver. */
-function visivel(u: User, alias = "f") {
-  const nao = `${alias}.apagada_em IS NULL`; // faturas apagadas ficam escondidas
-  const vis = categoriasVisiveis(u);
-  if (vis === "todas") return { sql: nao, args: [] as string[] };
-  return { sql: `${nao} AND ${alias}.categoria IN (${vis.map(() => "?").join(",")})`, args: [...vis] as string[] };
+/** Todos os cargos vêem todas as faturas (menos as apagadas). O `u` fica para o caso de voltarmos a restringir. */
+function visivel(_u: User, alias = "f") {
+  return { sql: `${alias}.apagada_em IS NULL`, args: [] as string[] };
 }
 
 const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome,
@@ -68,7 +66,7 @@ type Totais = { n: number; total: number };
 
 export const todosPredios = () => query<Predio>("SELECT * FROM predios ORDER BY nome");
 export const todasMaquinas = () => query<Maquina>("SELECT * FROM maquinas ORDER BY numero_interno");
-export type Empresa = { id: number; nome: string; nif: string | null };
+export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null };
 export const todasEmpresas = () => query<Empresa>("SELECT * FROM empresas ORDER BY nome");
 
 export function prediosComTotais(u: User) {
@@ -179,3 +177,46 @@ export async function mesesEmFalta(u: User) {
 export type Utilizador = { id: number; nome: string; email: string; cargo: string; ativo: number };
 export const todosUtilizadores = () =>
   query<Utilizador>("SELECT id, nome, email, cargo, ativo FROM users ORDER BY ativo DESC, nome");
+
+// ---------- Nomes (para mostrar ids como texto) ----------
+export type Nomes = { empresas: Record<number, string>; predios: Record<number, string>; maquinas: Record<number, string> };
+
+export async function carregarNomes(): Promise<Nomes> {
+  const [e, p, m] = await Promise.all([todasEmpresas(), todosPredios(), todasMaquinas()]);
+  return {
+    empresas: Object.fromEntries(e.map((x) => [x.id, x.nome])),
+    predios: Object.fromEntries(p.map((x) => [x.id, x.nome])),
+    maquinas: Object.fromEntries(m.map((x) => [x.id, x.numero_interno])),
+  };
+}
+
+// ---------- Propostas de alteração (contabilista → admin) ----------
+export type Proposta = {
+  id: number; fatura_id: number; user_id: number; user_nome: string; criado_em: string; alteracoes: string; estado: string;
+  decidido_por_nome: string | null; decidido_em: string | null; motivo: string | null;
+  fatura_fornecedor: string | null; fatura_numero: string | null; fatura_apagada: string | null;
+  /** Valores atuais da fatura, para avisar se mudou desde que a proposta foi feita. */
+  atual: Record<string, unknown> | null;
+};
+
+export async function listarPropostas(o: { estado?: string[]; faturaId?: number; userId?: number; limite?: number } = {}): Promise<Proposta[]> {
+  const where: string[] = [];
+  const args: unknown[] = [];
+  if (o.estado) { where.push(`p.estado IN (${o.estado.map(() => "?").join(",")})`); args.push(...o.estado); }
+  if (o.faturaId) { where.push("p.fatura_id = ?"); args.push(o.faturaId); }
+  if (o.userId) { where.push("p.user_id = ?"); args.push(o.userId); }
+  const rows = await query<Omit<Proposta, "atual">>(
+    `SELECT p.*, u.nome AS user_nome, d.nome AS decidido_por_nome, f.fornecedor AS fatura_fornecedor, f.numero AS fatura_numero, f.apagada_em AS fatura_apagada
+     FROM propostas p JOIN users u ON u.id = p.user_id LEFT JOIN users d ON d.id = p.decidido_por JOIN faturas f ON f.id = p.fatura_id
+     ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY p.id DESC LIMIT ${Math.min(o.limite ?? 100, 500)}`, args);
+  const pendentes = [...new Set(rows.filter((r) => r.estado === "pendente").map((r) => r.fatura_id))];
+  const atuais = pendentes.length
+    ? await query<Record<string, unknown> & { id: number }>(
+        `SELECT id, ${CAMPOS_EDITAVEIS.join(", ")} FROM faturas WHERE id IN (${pendentes.map(() => "?").join(",")})`, pendentes)
+    : [];
+  return rows.map((r) => ({ ...r, atual: atuais.find((a) => a.id === r.fatura_id) ?? null }));
+}
+
+export async function contarPropostasPendentes(): Promise<number> {
+  return (await queryOne<{ n: number }>("SELECT COUNT(*)::int AS n FROM propostas WHERE estado = 'pendente'"))?.n ?? 0;
+}

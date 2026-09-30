@@ -9,7 +9,8 @@ export const DATA_DIR = process.env.GESTAO_DATA_DIR ?? path.join(process.cwd(), 
 // Categorias e cargos da aplicação
 export const CATEGORIAS = ["energia", "agua", "contabilidade", "predio", "maquinas", "outros"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
-export const CARGOS = ["admin", "operador", ...CATEGORIAS] as const;
+// admin: faz tudo · operador: carrega e edita · contabilista: vê tudo e propõe edições, que um admin tem de aceitar
+export const CARGOS = ["admin", "operador", "contabilista"] as const;
 export type Cargo = (typeof CARGOS)[number];
 
 type Driver = { query(sql: string, params: unknown[]): Promise<Record<string, unknown>[]>; exec(sql: string): Promise<void> };
@@ -39,7 +40,7 @@ async function criarDriver(): Promise<Driver> {
   };
 }
 
-const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico"];
+const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico", "propostas"];
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -81,6 +82,9 @@ const SCHEMA = `
   );
   -- Campos vindos do QR fiscal da AT, envio à contabilidade e "apagar" recuperável
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS nif TEXT;
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS morada TEXT;
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS codigo_postal TEXT;
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS localidade TEXT;
   CREATE UNIQUE INDEX IF NOT EXISTS empresas_nif_uq ON empresas(nif) WHERE nif IS NOT NULL;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS atcud TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS nif_adquirente TEXT;
@@ -97,6 +101,20 @@ const SCHEMA = `
     acao TEXT NOT NULL,
     detalhe TEXT
   );
+  -- Edições propostas por contabilistas: só entram em vigor quando um admin as aceita
+  CREATE TABLE IF NOT EXISTS propostas (
+    id SERIAL PRIMARY KEY,
+    fatura_id INTEGER NOT NULL REFERENCES faturas(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    criado_em TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    alteracoes TEXT NOT NULL,                     -- JSON { campo: [antes, depois] }
+    estado TEXT NOT NULL DEFAULT 'pendente',      -- pendente | aceite | rejeitada | substituida
+    decidido_por INTEGER REFERENCES users(id),
+    decidido_em TEXT,
+    motivo TEXT
+  );
+  -- Cargos antigos (por categoria) passam ao mais restrito: o contabilista propõe e um admin aceita.
+  UPDATE users SET cargo = 'contabilista' WHERE cargo NOT IN ('admin', 'operador', 'contabilista');
   -- No Supabase, sem RLS as tabelas ficariam legíveis por qualquer pessoa via API pública.
   -- Ativar RLS sem políticas bloqueia a API; a app liga-se com o utilizador da base de dados.
   ${TABELAS.map((t) => `ALTER TABLE ${t} ENABLE ROW LEVEL SECURITY;`).join("\n  ")}
@@ -124,7 +142,7 @@ async function iniciar(): Promise<Driver> {
     const ins = "INSERT INTO users (nome,email,password_hash,cargo) VALUES ($1,$2,$3,$4) ON CONFLICT (email) DO NOTHING";
     await d.query(ins, ["Sr. Filipe", "filipe@local", hashPassword(senhaInicial("FILIPE_PASSWORD", "filipe123", "filipe@local")), "admin"]);
     await d.query(ins, ["Lisa", "lisa@local", hashPassword(senhaInicial("LISA_PASSWORD", "lisa123", "lisa@local")), "operador"]);
-    await d.query(ins, ["Contabilidade", "contabilidade@local", hashPassword(senhaInicial("CONTABILIDADE_PASSWORD", "conta123", "contabilidade@local")), "contabilidade"]);
+    await d.query(ins, ["Contabilidade", "contabilidade@local", hashPassword(senhaInicial("CONTABILIDADE_PASSWORD", "conta123", "contabilidade@local")), "contabilista"]);
   }
   return d;
 }

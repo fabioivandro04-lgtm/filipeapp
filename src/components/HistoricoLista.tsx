@@ -1,24 +1,14 @@
 import Link from "next/link";
 import type { Registo } from "@/lib/historico";
-import { ROTULO_CAMPO, type Diferencas } from "@/lib/historico";
+import type { Diferencas } from "@/lib/historico";
 import { money } from "@/lib/format";
+import type { Nomes } from "@/lib/queries";
+import DiffLista from "./Diff";
 import { restaurarFatura, reverterAlteracao } from "@/app/actions";
-
-export type Nomes = { empresas: Record<number, string>; predios: Record<number, string>; maquinas: Record<number, string> };
-
-function valor(campo: string, v: unknown, n: Nomes): string {
-  if (v == null || v === "") return "—";
-  if (campo === "empresa_id") return n.empresas[Number(v)] ?? `#${v}`;
-  if (campo === "predio_id") return n.predios[Number(v)] ?? `#${v}`;
-  if (campo === "maquina_id") return n.maquinas[Number(v)] ?? `#${v}`;
-  if (campo === "revisada") return Number(v) ? "Sim" : "Não";
-  if (campo === "total" || campo === "iva") return money(Number(v));
-  return String(v);
-}
 
 const ACAO: Record<string, string> = {
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
-  revertida: "desfez uma alteração", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
+  revertida: "desfez uma alteração", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
 };
 
 export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarFatura }: { registos: Registo[]; nomes: Nomes; podeDesfazer: boolean; mostrarFatura: boolean }) {
@@ -41,12 +31,9 @@ export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarF
               </p>
               <time className="text-xs text-slate-400">{r.quando.replace("T", " ").slice(0, 16)}</time>
             </div>
-            {r.acao === "editada" && det && (
-              <ul className="mt-2 space-y-0.5 text-slate-600">
-                {Object.entries(det as Diferencas).map(([campo, [a, d]]) => (
-                  <li key={campo}><span className="text-slate-500">{ROTULO_CAMPO[campo] ?? campo}:</span> {valor(campo, a, nomes)} → <span className="font-medium">{valor(campo, d, nomes)}</span></li>
-                ))}
-              </ul>
+            {(r.acao === "editada" || r.acao === "proposta") && det && <div className="mt-2"><DiffLista diff={det as Diferencas} nomes={nomes} /></div>}
+            {(r.acao === "proposta_aceite" || r.acao === "proposta_rejeitada") && det && (
+              <p className="mt-1 text-slate-500">Proposta de {det.autor}{det.motivo ? ` — motivo: ${det.motivo}` : ""}</p>
             )}
             {r.acao === "criada" && det && <p className="mt-1 text-slate-500">{det.fornecedor ?? "sem nome"} · {money(det.total)}{det.qr ? " · QR fiscal lido" : ""}</p>}
             {podeDesfazer && r.acao === "editada" && !desfeitos.has(r.id) && r.fatura_apagada === null && (
