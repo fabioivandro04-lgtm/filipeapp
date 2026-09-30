@@ -6,19 +6,30 @@ import { CATEGORIAS } from "@/lib/categorias";
 import { lerQrDoFicheiro } from "@/lib/qr-cliente";
 import { PageHeader } from "@/components/Ui";
 
-/** Reduz fotos grandes no telemóvel (o servidor só aceita ~4 MB por pedido). */
+const ALVO_BYTES = 3.2 * 1024 * 1024; // abaixo do limite de 4,5 MB da Vercel, com folga para o resto do pedido
+
+/** Reduz fotos grandes do telemóvel e converte formatos como HEIC (iPhone) para JPEG. */
 async function comprimir(file: File): Promise<File> {
-  if (!file.type.startsWith("image/") || file.type === "image/gif") return file;
+  if (file.type === "application/pdf" || file.type === "image/gif") return file;
+  if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)) return file;
   try {
     const bmp = await createImageBitmap(file);
-    const escala = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bmp.width * escala);
-    canvas.height = Math.round(bmp.height * escala);
-    canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
-    if (!blob || blob.size >= file.size) return file;
-    return new File([blob], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+    let melhor: Blob | null = null;
+    // Tenta tamanhos e qualidades cada vez mais baixos até caber
+    for (const [lado, qualidade] of [[2200, 0.85], [1800, 0.78], [1400, 0.7], [1100, 0.65]]) {
+      const escala = Math.min(1, lado / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(bmp.width * escala);
+      canvas.height = Math.round(bmp.height * escala);
+      canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", qualidade));
+      if (blob) melhor = blob;
+      if (blob && blob.size <= ALVO_BYTES) break;
+    }
+    if (!melhor) return file;
+    const formatoAceite = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
+    if (formatoAceite && file.size <= ALVO_BYTES && melhor.size >= file.size) return file; // já é pequena
+    return new File([melhor], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
   } catch {
     return file;
   }
@@ -54,7 +65,7 @@ export default function Upload() {
         ids.push(r.id!);
       }
     } catch {
-      setErro("Não foi possível enviar. Verifique a ligação e tente novamente.");
+      setErro("Não foi possível enviar. Verifique a ligação e tente novamente (ou use uma foto mais pequena).");
       setEstado(null);
       return;
     }

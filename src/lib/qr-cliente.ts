@@ -20,14 +20,15 @@ function desenhar(fonte: CanvasImageSource, w: number, h: number) {
 
 async function deImagem(file: File): Promise<string | null> {
   const bmp = await createImageBitmap(file);
-  // Tenta a dois tamanhos: um QR pequeno numa foto grande lê melhor sem reduzir demasiado
-  for (const max of [1600, 2800]) {
+  // Do menor para o maior e pára no primeiro que resulta: reduzir a foto elimina o ruído (e é mais rápido),
+  // mas um QR pequeno numa foto grande precisa de mais resolução. Nunca usa o tamanho total (lento e pior).
+  for (const max of [800, 1400, 2200]) {
     const esc = Math.min(1, max / Math.max(bmp.width, bmp.height));
     const w = Math.round(bmp.width * esc), h = Math.round(bmp.height * esc);
     const { ctx } = desenhar(bmp, w, h);
     const t = procurar(ctx.getImageData(0, 0, w, h));
     if (t) return t;
-    if (esc === 1) break;
+    if (esc === 1) break; // a imagem já é mais pequena do que este tamanho
   }
   return null;
 }
