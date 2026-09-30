@@ -12,12 +12,12 @@ type Item = { descricao: string; quantidade: number | null; preco_unitario: numb
 export default async function FaturaPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const f = obterFatura(user, Number(id));
+  const f = await obterFatura(user, Number(id));
   if (!f) notFound();
   const podeEditar = user.cargo === "admin" || user.cargo === "operador";
   const itens: Item[] = f.itens ? JSON.parse(f.itens) : [];
-  const predios = todosPredios(), maquinas = todasMaquinas(), empresas = todasEmpresas();
-  const pdf = f.ficheiro?.endsWith(".pdf");
+  const [predios, maquinas, empresas] = await Promise.all([todosPredios(), todasMaquinas(), todasEmpresas()]);
+  const pdf = f.ficheiro_mime === "application/pdf";
 
   return (
     <>
@@ -28,7 +28,7 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
         <div className="card overflow-hidden lg:sticky lg:top-20 lg:self-start">
-          {f.ficheiro ? (pdf
+          {f.ficheiro_id ? (pdf
             ? <iframe src={`/api/file/${f.id}`} className="h-[70vh] w-full" title="Fatura" />
             // eslint-disable-next-line @next/next/no-img-element
             : <img src={`/api/file/${f.id}`} alt="Fatura" className="w-full" />)

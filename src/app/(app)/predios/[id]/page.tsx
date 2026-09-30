@@ -9,10 +9,9 @@ import { PageHeader, Stat } from "@/components/Ui";
 export default async function PredioPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const p = todosPredios().find((x) => x.id === Number(id));
+  const p = (await todosPredios()).find((x) => x.id === Number(id));
   if (!p) notFound();
-  const faturas = listarFaturas(user, { predio_id: p.id });
-  const meses = totaisPorMes(user, p.id);
+  const [faturas, meses] = await Promise.all([listarFaturas(user, { predio_id: p.id }), totaisPorMes(user, p.id)]);
   const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
   const por = (cat: string) => faturas.filter((f) => f.categoria === cat).reduce((s, f) => s + (f.total ?? 0), 0);
 

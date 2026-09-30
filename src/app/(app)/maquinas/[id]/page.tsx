@@ -10,9 +10,9 @@ type Item = { descricao: string; quantidade: number | null; total: number | null
 export default async function MaquinaPage({ params }: { params: Promise<{ id: string }> }) {
   const user = await requireUser();
   const { id } = await params;
-  const m = todasMaquinas().find((x) => x.id === Number(id));
+  const m = (await todasMaquinas()).find((x) => x.id === Number(id));
   if (!m) notFound();
-  const faturas = listarFaturas(user, { maquina_id: m.id });
+  const faturas = await listarFaturas(user, { maquina_id: m.id });
   const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
   // Histórico do que a máquina consumiu: uma linha por artigo comprado
   const consumos = faturas.flatMap((f) =>

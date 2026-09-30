@@ -6,7 +6,7 @@ export async function GET(req: Request) {
   const u = await getUser();
   if (!u) return new Response("Não autenticado", { status: 401 });
   const sp = new URL(req.url).searchParams;
-  const rows = listarFaturas(u, { categoria: sp.get("categoria") ?? undefined, q: sp.get("q") ?? undefined });
+  const rows = await listarFaturas(u, { categoria: sp.get("categoria") ?? undefined, q: sp.get("q") ?? undefined });
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Faturas");

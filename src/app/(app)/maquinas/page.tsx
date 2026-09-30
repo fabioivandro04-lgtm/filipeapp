@@ -7,7 +7,7 @@ import { PageHeader, Vazio } from "@/components/Ui";
 
 export default async function Maquinas() {
   const user = await requireUser();
-  const maquinas = maquinasComTotais(user);
+  const maquinas = await maquinasComTotais(user);
   return (
     <>
       <PageHeader titulo="Máquinas" subtitulo="O que cada máquina já custou, com base nas faturas associadas." />

@@ -7,7 +7,7 @@ import { PageHeader, Vazio } from "@/components/Ui";
 
 export default async function Predios() {
   const user = await requireUser();
-  const predios = prediosComTotais(user);
+  const predios = await prediosComTotais(user);
   return (
     <>
       <PageHeader titulo="Prédios" subtitulo="Água, energia e restantes despesas de cada prédio." />

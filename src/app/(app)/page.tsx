@@ -9,8 +9,7 @@ import { PageHeader, Stat } from "@/components/Ui";
 export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
-  const faturas = listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1" });
-  const r = resumo(user);
+  const [faturas, r] = await Promise.all([listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1" }), resumo(user)]);
   const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q }).filter(([, v]) => v) as [string, string][]).toString();
 
   return (
