@@ -13,6 +13,8 @@ import { excelFaturas, nomeFicheiro } from "@/lib/excel";
 import { guardarConfig } from "@/lib/config";
 import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
 import { nifValido } from "@/lib/nif";
+import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
+import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
@@ -114,7 +116,7 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
     if (!p && (d.categoria === "energia" || d.categoria === "agua")) notas.push(`Identificador ${d.identificador} não corresponde a nenhum prédio.`);
   }
   if (d?.numero_interno_maquina) {
-    const m = await queryOne<{ id: number }>("SELECT id FROM maquinas WHERE numero_interno = ? AND apagada_em IS NULL", [d.numero_interno_maquina]);
+    const m = await maquinaPorNumero(d.numero_interno_maquina);
     maquinaId = m?.id ?? null;
     if (!m) notas.push(`Máquina ${d.numero_interno_maquina} não existe.`);
   }
@@ -195,10 +197,17 @@ export async function guardarFatura(id: number, form: FormData) {
   const predioId = num(form.get("predio_id"));
   const identificador = txt(form.get("identificador"));
   const nifAdquirente = txt(form.get("nif_adquirente"));
+  const numMaquina = txt(form.get("maquina"));
+  let maquinaId: number | null = null;
+  if (numMaquina) {
+    const m = await maquinaPorNumero(numMaquina);
+    if (!m) volta("erro", `A máquina «${numMaquina}» não existe. Escreva o nº interno (ex.: SL 005 ou IN003) ou deixe em branco.`);
+    maquinaId = m!.id;
+  }
   const depois: Campos = {
     fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
     total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
-    predio_id: predioId, maquina_id: num(form.get("maquina_id")), identificador, nif_adquirente: nifAdquirente, revisada: form.get("revisada") ? 1 : 0,
+    predio_id: predioId, maquina_id: maquinaId, identificador, nif_adquirente: nifAdquirente, revisada: form.get("revisada") ? 1 : 0,
   };
 
   if (!direto) {
@@ -366,29 +375,147 @@ export async function atualizarPredio(id: number, form: FormData) {
   irPara(`/predios/${id}`, "ok", "Prédio atualizado.");
 }
 
+const inteiro = (v: FormDataEntryValue | null) => { const n = num(v); return n == null ? null : Math.round(n); };
+const estadoValido = (v: FormDataEntryValue | null): Estado => ((ESTADOS as string[]).includes(String(v)) ? (String(v) as Estado) : "stock");
+
 export async function criarMaquina(form: FormData) {
   const u = await adminOuSai();
   const numero = String(form.get("numero") ?? "").trim();
   if (!numero) irPara("/maquinas", "erro", "Escreva o nº interno da máquina.");
-  const r = await queryOne<{ id: number }>("INSERT INTO maquinas (numero_interno,descricao) VALUES (?,?) ON CONFLICT (numero_interno) DO NOTHING RETURNING id", [numero, txt(form.get("descricao"))]);
+  const d = { designacao: txt(form.get("designacao")), marca: txt(form.get("marca")), modelo: txt(form.get("modelo")) };
+  let r: { id: number } | undefined;
+  try {
+    r = await queryOne<{ id: number }>(
+      "INSERT INTO maquinas (numero_interno, descricao, empresa_id, designacao, marca, modelo, estado) VALUES (?,?,?,?,?,?, 'stock') RETURNING id",
+      [numero, descricaoDe(d) || null, num(form.get("empresa")), d.designacao, d.marca, d.modelo]);
+  } catch { r = undefined; }
   if (!r) irPara("/maquinas", "erro", `Já existe uma máquina com o nº ${numero} (pode estar apagada: veja Mais → Apagados).`);
   await registar(u, null, "maquina_criada", { nome: numero });
   revalidatePath("/maquinas");
-  irPara("/maquinas", "ok", `Máquina ${numero} criada.`);
+  irPara(`/maquinas/${r!.id}`, "ok", `Máquina ${numero} criada. Complete os dados abaixo.`);
 }
 
+/** Admin e operador editam as máquinas (o operador atualiza o stock no dia a dia). */
 export async function atualizarMaquina(id: number, form: FormData) {
-  const u = await adminOuSai();
+  const u = await podeEditar();
+  if (!u) redirect("/");
   const numero = String(form.get("numero") ?? "").trim();
   if (!numero) irPara(`/maquinas/${id}`, "erro", "O nº interno não pode ficar vazio.");
+  const d = { designacao: txt(form.get("designacao")), marca: txt(form.get("marca")), modelo: txt(form.get("modelo")) };
   try {
-    await query("UPDATE maquinas SET numero_interno = ?, descricao = ? WHERE id = ?", [numero, txt(form.get("descricao")), id]);
+    await query(
+      `UPDATE maquinas SET numero_interno=?, descricao=?, empresa_id=?, designacao=?, marca=?, modelo=?, ano=?, id_fornecedor=?, numero_serie=?, peso_kg=?,
+         matricula=?, horas=?, data_compra=?, data_chegada=?, fornecedor=?, agencia=?, valor_compra=?, facturada=?, observacoes=?, estado=?,
+         venda_fatura=?, comprador=?, data_venda=?, atualizada_em=${AGORA} WHERE id=?`,
+      [numero, descricaoDe(d) || null, num(form.get("empresa")), d.designacao, d.marca, d.modelo, inteiro(form.get("ano")), txt(form.get("id_fornecedor")),
+        txt(form.get("numero_serie")), inteiro(form.get("peso_kg")), txt(form.get("matricula")), num(form.get("horas")), txt(form.get("data_compra")),
+        txt(form.get("data_chegada")), txt(form.get("fornecedor")), txt(form.get("agencia")), num(form.get("valor_compra")), txt(form.get("facturada")),
+        txt(form.get("observacoes")), estadoValido(form.get("estado")), txt(form.get("venda_fatura")), txt(form.get("comprador")), txt(form.get("data_venda")), id]);
   } catch {
     irPara(`/maquinas/${id}`, "erro", `Já existe outra máquina com o nº ${numero}.`);
   }
   await registar(u, null, "maquina_editada", { nome: numero });
   revalidatePath("/", "layout");
   irPara(`/maquinas/${id}`, "ok", "Máquina atualizada.");
+}
+
+// ---------- Importar stock (ficheiros Excel) ----------
+export type ResultadoStock = {
+  erro?: string;
+  importado?: boolean;
+  empresa?: string;
+  folhas?: { nome: string; sugerido: EstadoFolha; estado: EstadoFolha; n: number; ignoradas: number }[];
+  resumo?: { total: number; novas: number; atualizar: number; iguais: number; duplicadas: number; renumeradas: number; ignoradas: number; semValor: number; porEstado: Record<string, number> };
+  renumeradas?: Plano["renumeradas"];
+  duplicadas?: Plano["duplicadas"];
+  ignoradas?: Plano["ignoradas"];
+  atualizacoes?: { numero: string; mudancas: string[] }[];
+};
+
+const COLUNAS_MAQUINA = [
+  "numero_interno", "descricao", "empresa_id", "designacao", "marca", "modelo", "ano", "id_fornecedor", "numero_serie", "peso_kg", "matricula", "horas",
+  "data_compra", "data_chegada", "fornecedor", "agencia", "valor_compra", "valor_compra_original", "facturada", "observacoes", "estado", "assinalada",
+  "venda_fatura", "comprador", "data_venda", "origem", "atualizada_em",
+] as const;
+
+/**
+ * Analisa (modo «analisar») ou importa (modo «importar») um ficheiro de stock de UMA empresa.
+ * As duas fases usam exatamente o mesmo plano, por isso o que a pré-visualização mostra é o que se importa.
+ * Importar de novo o mesmo ficheiro não duplica nada: atualiza só o que mudou (ex.: uma máquina que passou a vendida).
+ */
+export async function processarStock(form: FormData): Promise<ResultadoStock> {
+  const user = await requireUser();
+  if (user.cargo !== "admin") return { erro: "Só um administrador pode importar stock." };
+  const file = form.get("ficheiro");
+  if (!(file instanceof File) || file.size === 0) return { erro: "Escolha um ficheiro Excel (.xlsx)." };
+  if (!/\.xlsx$/i.test(file.name)) return { erro: "O ficheiro tem de ser um Excel .xlsx (não .xls nem .csv)." };
+  if (file.size > MAX_BYTES) return { erro: "O ficheiro é demasiado grande (máx. 4 MB)." };
+  const empresa = await queryOne<{ id: number; nome: string }>("SELECT id, nome FROM empresas WHERE id = ? AND apagada_em IS NULL", [num(form.get("empresa"))]);
+  if (!empresa) return { erro: "Escolha a empresa a que o ficheiro pertence." };
+
+  let escolhidos: Record<string, EstadoFolha> = {};
+  try {
+    const bruto = JSON.parse(String(form.get("estados") || "{}")) as Record<string, string>;
+    for (const [folha, e] of Object.entries(bruto)) if ((ESTADOS as string[]).includes(e) || e === "ignorar") escolhidos[folha] = e as EstadoFolha;
+  } catch { escolhidos = {}; }
+
+  let folhas;
+  try {
+    folhas = await lerFicheiroStock(Buffer.from(await file.arrayBuffer()));
+  } catch {
+    return { erro: "Não consegui ler o ficheiro. Confirme que é um Excel (.xlsx) e que não tem palavra-passe." };
+  }
+  if (!folhas.length) return { erro: "Não encontrei nenhuma folha com as colunas «Designação do equipamento» e «Nº Interno»." };
+
+  const existentes = (await maquinasExistentes()) as unknown as Existente[];
+  const plano = planear(folhas, escolhidos, empresa.id, existentes, { limparVazios: form.get("vazios") === "limpar" });
+  const porEstado: Record<string, number> = {};
+  for (const it of plano.itens) porEstado[it.l.estado] = (porEstado[it.l.estado] ?? 0) + 1;
+  const novas = plano.itens.filter((i) => i.acao === "nova");
+  const atualizar = plano.itens.filter((i) => i.acao === "atualizar");
+
+  const resultado: ResultadoStock = {
+    empresa: empresa.nome,
+    folhas: folhas.map((f) => ({ nome: f.nome, sugerido: f.sugerido, estado: escolhidos[f.nome] ?? f.sugerido, n: f.linhas.length, ignoradas: f.ignoradas.length })),
+    resumo: {
+      total: plano.itens.length, novas: novas.length, atualizar: atualizar.length, iguais: plano.itens.length - novas.length - atualizar.length,
+      duplicadas: plano.duplicadas.length, renumeradas: plano.renumeradas.length, ignoradas: plano.ignoradas.length, semValor: plano.semValor, porEstado,
+    },
+    renumeradas: plano.renumeradas, duplicadas: plano.duplicadas, ignoradas: plano.ignoradas,
+    atualizacoes: atualizar.slice(0, 40).map((i) => ({ numero: i.numeroFinal, mudancas: i.mudancas.map((m) => ROTULO_CAMPO[m] ?? m) })),
+  };
+  if (form.get("modo") !== "importar") return resultado;
+
+  // ---- importar ----
+  const agora = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const origem = file.name.slice(0, 120);
+  const linhaBd = (i: (typeof plano.itens)[number]) => {
+    const l = i.l;
+    return [i.numeroFinal, descricaoDe(l) || null, empresa.id, l.designacao, l.marca, l.modelo, l.ano, l.id_fornecedor, l.numero_serie, l.peso_kg, l.matricula, l.horas,
+      l.data_compra, l.data_chegada, l.fornecedor, l.agencia, l.valor_compra, l.valor_compra_original, l.facturada, l.observacoes, l.estado, l.assinalada ? 1 : 0,
+      l.venda_fatura, l.comprador, l.data_venda, origem, agora];
+  };
+  try {
+    for (let i = 0; i < novas.length; i += 40) {
+      const bloco = novas.slice(i, i + 40);
+      const marcas = bloco.map(() => `(${COLUNAS_MAQUINA.map(() => "?").join(",")})`).join(",");
+      await query(`INSERT INTO maquinas (${COLUNAS_MAQUINA.join(",")}) VALUES ${marcas}`, bloco.flatMap(linhaBd));
+    }
+    for (const it of atualizar) {
+      const valores = linhaBd(it);
+      const dadoDe = (col: string) => valores[COLUNAS_MAQUINA.indexOf(col as (typeof COLUNAS_MAQUINA)[number])];
+      // só as colunas que mudaram (+ descrição, origem e data); «empresa» = adotar uma máquina que estava sem empresa
+      const cols = new Set<string>(["descricao", "origem", "atualizada_em"]);
+      for (const m of it.mudancas) cols.add(m === "empresa" ? "empresa_id" : m);
+      const lista = [...cols].filter((c) => (COLUNAS_MAQUINA as readonly string[]).includes(c));
+      await query(`UPDATE maquinas SET ${lista.map((c) => `${c} = ?`).join(", ")} WHERE id = ?`, [...lista.map(dadoDe), it.id]);
+    }
+  } catch (e) {
+    return { ...resultado, erro: `A importação parou a meio (${(e as Error).message}). Pode voltar a importar o mesmo ficheiro: o que já entrou não é duplicado.` };
+  }
+  await registar(user, null, "maquinas_importadas", { resumo: `${origem} → ${empresa.nome}: ${novas.length} novas, ${atualizar.length} atualizadas` });
+  revalidatePath("/", "layout");
+  return { ...resultado, importado: true };
 }
 
 /** Cria uma fatura sem ficheiro (para lançar à mão) e abre-a para preencher. */

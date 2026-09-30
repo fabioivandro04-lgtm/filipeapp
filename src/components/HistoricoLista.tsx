@@ -16,7 +16,7 @@ function acaoEntidade(acao: string): string | null {
 
 const ACAO: Record<string, string> = {
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
-  revertida: "desfez uma alteração", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
+  revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
 };
 
 export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarFatura }: { registos: Registo[]; nomes: Nomes; podeDesfazer: boolean; mostrarFatura: boolean }) {
@@ -32,6 +32,7 @@ export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarF
               <p>
                 <span className="font-medium">{r.user_nome ?? "Sistema"}</span> {ACAO[r.acao] ?? acaoEntidade(r.acao) ?? r.acao}
                 {!r.fatura_id && det?.nome && <> <span className="font-medium">{det.nome}</span></>}
+                {r.acao === "maquinas_importadas" && det?.resumo && <> <span className="font-medium">{det.resumo}</span></>}
                 {mostrarFatura && r.fatura_id && (
                   <> — {r.fatura_apagada === null
                     ? <Link href={`/faturas/${r.fatura_id}`} className="text-brand-600 hover:underline">{r.fatura_fornecedor ?? `fatura #${r.fatura_id}`} {r.fatura_numero}</Link>

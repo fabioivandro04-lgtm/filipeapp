@@ -28,9 +28,8 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
   ]);
   const minha = propostas.find((p) => p.user_id === user.id);
   // Se o prédio/máquina desta fatura foi apagado, continua a aparecer nas opções (senão gravar apagava a ligação sem querer)
-  const [prediosTodos, maquinasTodas] = await Promise.all([todosPredios(true), todasMaquinas(true)]);
+  const prediosTodos = await todosPredios(true);
   const opcoesPredios = predios.some((p) => p.id === f.predio_id) ? predios : [...predios, ...prediosTodos.filter((p) => p.id === f.predio_id)];
-  const opcoesMaquinas = maquinas.some((m) => m.id === f.maquina_id) ? maquinas : [...maquinas, ...maquinasTodas.filter((m) => m.id === f.maquina_id)];
   const pdf = f.ficheiro_mime === "application/pdf";
 
   return (
@@ -102,11 +101,9 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
                 </select>
               </div>
               <div>
-                <label className="label">Máquina</label>
-                <select name="maquina_id" defaultValue={f.maquina_id ?? ""} className="field">
-                  <option value="">—</option>
-                  {opcoesMaquinas.map((m) => <option key={m.id} value={m.id}>{m.numero_interno} {m.descricao}{m.apagada_em ? " (apagada)" : ""}</option>)}
-                </select>
+                <label className="label">Máquina (nº interno)</label>
+                <input name="maquina" defaultValue={f.maquina_numero ?? ""} list="lista-maquinas" placeholder="Ex.: SL 005 ou IN003" autoComplete="off" className="field" />
+                <datalist id="lista-maquinas">{maquinas.map((m) => <option key={m.id} value={m.numero_interno}>{m.descricao ?? ""}</option>)}</datalist>
               </div>
               <Campo nome="identificador" rotulo="Nº contador / cliente" v={f.identificador} span />
               <Campo nome="nif_adquirente" rotulo="NIF do cliente (a sua empresa)" v={f.nif_adquirente} span />

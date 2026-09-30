@@ -8,7 +8,7 @@ export type FaturaRow = {
   predio_id: number | null; maquina_id: number | null; empresa_id: number | null; empresa_nome: string | null;
   predio_nome: string | null; maquina_numero: string | null; identificador: string | null; itens: string | null;
   alerta: string | null; ficheiro_id: number | null; ficheiro_mime: string | null; revisada: number;
-  atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; enviada_em: string | null;
+  atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; enviada_em: string | null; intragrupo: boolean;
 };
 
 /** Todos os cargos vêem todas as faturas (menos as apagadas). O `u` fica para o caso de voltarmos a restringir. */
@@ -17,7 +17,8 @@ function visivel(_u: User, alias = "f") {
 }
 
 const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome,
-  (SELECT mime FROM ficheiros WHERE id = f.ficheiro_id) AS ficheiro_mime
+  (SELECT mime FROM ficheiros WHERE id = f.ficheiro_id) AS ficheiro_mime,
+  EXISTS (SELECT 1 FROM empresas e3 WHERE e3.nif IS NOT NULL AND e3.nif = f.nif_fornecedor AND e3.apagada_em IS NULL) AS intragrupo
   FROM faturas f JOIN users u ON u.id = f.criado_por
   LEFT JOIN predios p ON p.id = f.predio_id LEFT JOIN maquinas m ON m.id = f.maquina_id LEFT JOIN empresas e ON e.id = f.empresa_id`;
 
@@ -61,7 +62,15 @@ export async function resumo(u: User) {
 }
 
 export type Predio = { id: number; nome: string; morada: string | null; codigo_contador: string | null; apagada_em: string | null };
-export type Maquina = { id: number; numero_interno: string; descricao: string | null; apagada_em: string | null };
+export type Maquina = {
+  id: number; numero_interno: string; descricao: string | null; apagada_em: string | null; empresa_id: number | null;
+  designacao: string | null; marca: string | null; modelo: string | null; ano: number | null; id_fornecedor: string | null;
+  numero_serie: string | null; peso_kg: number | null; matricula: string | null; horas: number | null;
+  data_compra: string | null; data_chegada: string | null; fornecedor: string | null; agencia: string | null;
+  valor_compra: number | null; valor_compra_original: string | null; facturada: string | null; observacoes: string | null;
+  estado: string; assinalada: number; venda_fatura: string | null; comprador: string | null; data_venda: string | null;
+  origem: string | null; atualizada_em: string | null;
+};
 type Totais = { n: number; total: number };
 
 // Por defeito só os ativos (listas e escolhas); `true` inclui os apagados (para mostrar nomes em faturas e histórico antigos).
@@ -80,14 +89,74 @@ export function prediosComTotais(u: User) {
   );
 }
 
-export function maquinasComTotais(u: User) {
-  const v = visivel(u);
-  return query<Maquina & Totais>(
-    `SELECT m.*, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS total FROM maquinas m
-     LEFT JOIN faturas f ON f.maquina_id = m.id AND ${v.sql} WHERE m.apagada_em IS NULL GROUP BY m.id ORDER BY m.numero_interno`,
-    v.args,
-  );
+export type FiltroMaquinas = { empresa_id?: number; estado?: string; q?: string; pagina?: number; porPagina?: number };
+
+function condicoesMaquinas(f: FiltroMaquinas) {
+  const where = ["m.apagada_em IS NULL"];
+  const args: unknown[] = [];
+  if (f.empresa_id) { where.push("m.empresa_id = ?"); args.push(f.empresa_id); }
+  if (f.estado) { where.push("m.estado = ?"); args.push(f.estado); }
+  if (f.q?.trim()) {
+    const like = `%${f.q.trim()}%`;
+    where.push(`(m.numero_interno ILIKE ? OR REPLACE(UPPER(m.numero_interno), ' ', '') LIKE ? OR m.descricao ILIKE ? OR m.numero_serie ILIKE ?
+      OR m.matricula ILIKE ? OR m.fornecedor ILIKE ? OR m.comprador ILIKE ?)`);
+    args.push(like, `%${f.q.trim().toUpperCase().replace(/[\s*]/g, "")}%`, like, like, like, like, like);
+  }
+  return { sql: where.join(" AND "), args };
 }
+
+/** Máquinas com o que já custaram em faturas; paginadas (há centenas). */
+export async function listarMaquinas(u: User, f: FiltroMaquinas = {}) {
+  const v = visivel(u);
+  const c = condicoesMaquinas(f);
+  const porPagina = Math.min(f.porPagina ?? 50, 200);
+  const off = Math.max((f.pagina ?? 1) - 1, 0) * porPagina;
+  const [linhas, total] = await Promise.all([
+    query<Maquina & { empresa_nome: string | null; n: number; custo: number }>(
+      `SELECT m.*, e.nome AS empresa_nome, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS custo
+       FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id LEFT JOIN faturas f ON f.maquina_id = m.id AND ${v.sql}
+       WHERE ${c.sql} GROUP BY m.id, e.nome ORDER BY m.numero_interno LIMIT ${porPagina} OFFSET ${off}`,
+      [...v.args, ...c.args]),
+    queryOne<{ n: number }>(`SELECT COUNT(*)::int AS n FROM maquinas m WHERE ${c.sql}`, c.args),
+  ]);
+  return { linhas, total: total?.n ?? 0, porPagina };
+}
+
+/** Quantas máquinas e quanto valor de compra, por empresa e estado. */
+export function resumoMaquinas(empresaId?: number) {
+  return query<{ empresa: string | null; estado: string; n: number; valor: number }>(
+    `SELECT e.nome AS empresa, m.estado, COUNT(*)::int AS n, COALESCE(SUM(m.valor_compra),0)::float8 AS valor
+     FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id
+     WHERE m.apagada_em IS NULL ${empresaId ? "AND m.empresa_id = ?" : ""} GROUP BY e.nome, m.estado ORDER BY e.nome, m.estado`,
+    empresaId ? [empresaId] : []);
+}
+
+/** Vendidas, por empresa e comprador (para separar vendas a terceiros de transferências dentro do grupo). */
+export const vendidasPorComprador = (empresaId?: number) =>
+  query<{ empresa_id: number | null; comprador: string | null; n: number; valor: number }>(
+    `SELECT empresa_id, comprador, COUNT(*)::int AS n, COALESCE(SUM(valor_compra),0)::float8 AS valor FROM maquinas
+     WHERE apagada_em IS NULL AND estado = 'vendido' ${empresaId ? "AND empresa_id = ?" : ""} GROUP BY empresa_id, comprador`, empresaId ? [empresaId] : []);
+
+/** A mesma máquina física noutra empresa (mesmo nº de série, números internos diferentes). */
+export function maquinasComMesmaSerie(m: Pick<Maquina, "id" | "numero_serie">) {
+  const serie = (m.numero_serie ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (serie.length < 4) return Promise.resolve([]);
+  return query<{ id: number; numero_interno: string; estado: string; empresa: string | null; comprador: string | null }>(
+    `SELECT m.id, m.numero_interno, m.estado, e.nome AS empresa, m.comprador FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id
+     WHERE m.apagada_em IS NULL AND m.id <> ? AND regexp_replace(UPPER(COALESCE(m.numero_serie,'')), '[^A-Z0-9]', '', 'g') = ?`, [m.id, serie]);
+}
+
+export function maquinasParaExportar(f: FiltroMaquinas = {}) {
+  const c = condicoesMaquinas(f);
+  return query<Maquina & { empresa_nome: string | null }>(
+    `SELECT m.*, e.nome AS empresa_nome FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id WHERE ${c.sql} ORDER BY m.estado, m.numero_interno`, c.args);
+}
+
+export const maquinasExistentes = () => query<Maquina>("SELECT * FROM maquinas WHERE apagada_em IS NULL");
+
+/** Procura uma máquina pelo nº interno, tolerando «SL005», «sl 005» e «SL 005*». */
+export const maquinaPorNumero = (numero: string) =>
+  queryOne<{ id: number }>("SELECT id FROM maquinas WHERE apagada_em IS NULL AND REPLACE(UPPER(numero_interno), ' ', '') = ?", [numero.toUpperCase().replace(/[\s*]/g, "")]);
 
 /** Totais por mês (e categoria) das faturas de um prédio. */
 export async function totaisPorMes(u: User, predioId: number) {

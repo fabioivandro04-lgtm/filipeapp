@@ -31,6 +31,10 @@ Utilizadores de exemplo (só em `npm run dev`): `filipe@local / filipe123` (admi
 - **Contabilidade**: pacote do mês (Excel + originais com o QR intacto) em ZIP ou por email, com controlo do que já foi enviado.
 - **Histórico**: quem criou, editou ou apagou; desfazer edições; restaurar faturas apagadas.
 - **Cópia de segurança**: ZIP com todos os dados e ficheiros (sem palavras-passe).
+- **Máquinas e stock**: o inventário do grupo. Cada máquina pertence a uma empresa (mesmo dono, empresas diferentes) e tem estado
+  em stock / vendida / abatida. *Máquinas → Importar stock* lê os Excel de stock (folhas STOCK, VENDIDO, ABATE…), mostra primeiro o que vai
+  acontecer e pode repetir-se sem duplicar. Vendas entre empresas do grupo contam como **transferências**, não como vendas a terceiros.
+  Campos vazios são normais (ex.: baldes sem horas). A mesma máquina em duas empresas liga-se pelo nº de série.
 - **Utilizadores** e cargos (admin, operador, contabilista).
 - **Aprovações**: propostas de edição dos contabilistas, aceites ou rejeitadas (com motivo) por um admin.
 

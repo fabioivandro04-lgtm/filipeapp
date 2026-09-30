@@ -23,6 +23,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                 <CategoriaBadge categoria={f.categoria} />
                 {(f.predio_nome || f.maquina_numero) && <span className="text-xs text-slate-500">{f.predio_nome ?? `Máquina ${f.maquina_numero}`}</span>}
                 {f.empresa_nome && <span className="text-xs text-slate-400">· {f.empresa_nome}</span>}
+                {f.intragrupo && <span className="badge bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
                 {f.alerta && !f.revisada && <span className="badge bg-amber-100 text-amber-800">⚠ Rever</span>}
               </div>
             </Link>
@@ -43,7 +44,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                 <td className="whitespace-nowrap px-4 py-3">{dataPt(f.data)}</td>
                 <td className="px-4 py-3">
                   <Link href={`/faturas/${f.id}`} className="font-medium hover:text-brand-600">{f.fornecedor ?? "Fatura sem nome"}</Link>
-                  <span className="ml-2 text-xs text-slate-400">{f.numero}</span>
+                  <span className="ml-2 text-xs text-slate-400">{f.numero}</span>{f.intragrupo && <span className="badge ml-2 bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
                   {f.alerta && !f.revisada && <p className="mt-0.5 text-xs text-amber-700">⚠ {f.alerta}</p>}
                 </td>
                 <td className="px-4 py-3"><CategoriaBadge categoria={f.categoria} /></td>

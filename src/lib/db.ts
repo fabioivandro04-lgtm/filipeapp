@@ -82,6 +82,37 @@ const SCHEMA = `
   );
   -- Campos vindos do QR fiscal da AT, envio à contabilidade e "apagar" recuperável
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS nif TEXT;
+  -- Máquinas: inventário por empresa (importado dos ficheiros de stock)
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS empresa_id INTEGER REFERENCES empresas(id);
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS designacao TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS marca TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS modelo TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS ano INTEGER;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS id_fornecedor TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS numero_serie TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS peso_kg INTEGER;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS matricula TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS horas DOUBLE PRECISION;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS data_compra TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS data_chegada TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS fornecedor TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS agencia TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS valor_compra DOUBLE PRECISION;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS valor_compra_original TEXT;   -- quando o valor não era um número simples (ex.: «12812,50£»)
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS facturada TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS observacoes TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS estado TEXT NOT NULL DEFAULT 'stock';   -- stock | vendido | abatido | outro
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS assinalada INTEGER NOT NULL DEFAULT 0;   -- nº marcado com asterisco no ficheiro
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS venda_fatura TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS comprador TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS data_venda TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS origem TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS atualizada_em TEXT;
+  CREATE INDEX IF NOT EXISTS maquinas_empresa_idx ON maquinas(empresa_id);
+  -- «SL 005» e «SL005» são o mesmo nº (as faturas escrevem-no de várias maneiras). Não falha o arranque se já houver repetidos.
+  DO $$ BEGIN
+    CREATE UNIQUE INDEX IF NOT EXISTS maquinas_numero_norm_uq ON maquinas ((REPLACE(UPPER(numero_interno), ' ', ''))) WHERE apagada_em IS NULL;
+  EXCEPTION WHEN others THEN NULL; END $$;
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE predios ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS apagada_em TEXT;

@@ -14,3 +14,8 @@ export const CATEGORIA_INFO: Record<string, { nome: string; cor: string }> = {
 const MESES_EXTENSO = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
 /** "2026-06" → "junho de 2026" */
 export const mesExtenso = (m: string) => `${MESES_EXTENSO[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;
+
+/** Cores das etiquetas do estado de uma máquina. */
+export const COR_ESTADO: Record<string, string> = {
+  stock: "bg-emerald-100 text-emerald-800", vendido: "bg-slate-200 text-slate-700", abatido: "bg-red-100 text-red-800", outro: "bg-amber-100 text-amber-800",
+};
