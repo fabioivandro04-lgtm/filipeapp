@@ -21,7 +21,7 @@ const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.
   FROM faturas f JOIN users u ON u.id = f.criado_por
   LEFT JOIN predios p ON p.id = f.predio_id LEFT JOIN maquinas m ON m.id = f.maquina_id LEFT JOIN empresas e ON e.id = f.empresa_id`;
 
-export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; alerta?: boolean };
+export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean };
 
 export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<FaturaRow[]> {
   const v = visivel(u);
@@ -31,6 +31,8 @@ export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<Fatur
   if (filtro.q) { where.push("(f.fornecedor ILIKE ? OR f.numero ILIKE ?)"); args.push(`%${filtro.q}%`, `%${filtro.q}%`); }
   if (filtro.predio_id) { where.push("f.predio_id = ?"); args.push(filtro.predio_id); }
   if (filtro.maquina_id) { where.push("f.maquina_id = ?"); args.push(filtro.maquina_id); }
+  if (filtro.empresa_id) { where.push("f.empresa_id = ?"); args.push(filtro.empresa_id); }
+  if (filtro.mes) { where.push("substr(COALESCE(f.data,f.criado_em),1,7) = ?"); args.push(filtro.mes); }
   if (filtro.alerta) where.push("f.alerta IS NOT NULL AND f.revisada = 0");
   return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC LIMIT 500`, args);
 }
@@ -92,3 +94,84 @@ export async function totaisPorMes(u: User, predioId: number) {
     [predioId, ...v.args],
   );
 }
+
+// ---------- Relatórios ----------
+const MES = "substr(COALESCE(f.data,f.criado_em),1,7)";
+
+/** Total por mês dos últimos 12 meses (meses sem faturas aparecem a zero). */
+export async function serieMensal(u: User, empresaId?: number) {
+  const v = visivel(u);
+  const rows = await query<{ mes: string; total: number; n: number }>(
+    `SELECT ${MES} AS mes, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
+     WHERE ${v.sql} ${empresaId ? "AND f.empresa_id = ?" : ""} GROUP BY 1`,
+    [...v.args, ...(empresaId ? [empresaId] : [])],
+  );
+  const hoje = new Date();
+  return Array.from({ length: 12 }, (_, i) => {
+    const d = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (11 - i), 1));
+    const mes = d.toISOString().slice(0, 7);
+    const r = rows.find((x) => x.mes === mes);
+    return { mes, total: r?.total ?? 0, n: r?.n ?? 0 };
+  });
+}
+
+export async function totaisPorEmpresa(u: User, mes?: string) {
+  const v = visivel(u);
+  return query<{ rotulo: string; total: number; n: number }>(
+    `SELECT COALESCE(e.nome,'Sem empresa') AS rotulo, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n
+     FROM faturas f LEFT JOIN empresas e ON e.id = f.empresa_id
+     WHERE ${v.sql} ${mes ? `AND ${MES} = ?` : ""} GROUP BY 1 ORDER BY total DESC`,
+    [...v.args, ...(mes ? [mes] : [])],
+  );
+}
+
+export async function totaisPorCategoria(u: User, mes?: string, empresaId?: number) {
+  const v = visivel(u);
+  return query<{ rotulo: string; total: number; n: number }>(
+    `SELECT f.categoria AS rotulo, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
+     WHERE ${v.sql} ${mes ? `AND ${MES} = ?` : ""} ${empresaId ? "AND f.empresa_id = ?" : ""} GROUP BY 1 ORDER BY total DESC`,
+    [...v.args, ...(mes ? [mes] : []), ...(empresaId ? [empresaId] : [])],
+  );
+}
+
+/**
+ * Meses sem fatura de água/energia por prédio: entre a primeira fatura (máx. últimos 12 meses)
+ * e o mês passado. O mês atual não conta, porque a fatura pode ainda não ter chegado.
+ */
+export async function mesesEmFalta(u: User) {
+  const v = visivel(u);
+  const rows = await query<{ predio: string; categoria: string; mes: string }>(
+    `SELECT p.nome AS predio, f.categoria, ${MES} AS mes FROM faturas f JOIN predios p ON p.id = f.predio_id
+     WHERE f.categoria IN ('agua','energia') AND ${v.sql} GROUP BY 1,2,3 ORDER BY 1,2,3`,
+    v.args,
+  );
+  const hoje = new Date();
+  const passado = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  const limite = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 12, 1)).toISOString().slice(0, 7);
+  const grupos = new Map<string, { predio: string; categoria: string; meses: Set<string> }>();
+  for (const r of rows) {
+    const k = `${r.predio}|${r.categoria}`;
+    if (!grupos.has(k)) grupos.set(k, { predio: r.predio, categoria: r.categoria, meses: new Set() });
+    grupos.get(k)!.meses.add(r.mes);
+  }
+  const falta: { predio: string; categoria: string; meses: string[] }[] = [];
+  for (const g of grupos.values()) {
+    if (g.meses.size < 2) continue; // sem histórico não dá para saber o ritmo
+    const [primeiro] = [...g.meses].sort();
+    const em: string[] = [];
+    let [a, m] = (primeiro > limite ? primeiro : limite).split("-").map(Number);
+    for (;;) {
+      const mes = `${a}-${String(m).padStart(2, "0")}`;
+      if (mes > passado) break;
+      if (!g.meses.has(mes)) em.push(mes);
+      if (++m > 12) { m = 1; a++; }
+    }
+    if (em.length) falta.push({ predio: g.predio, categoria: g.categoria, meses: em });
+  }
+  return falta;
+}
+
+// ---------- Utilizadores ----------
+export type Utilizador = { id: number; nome: string; email: string; cargo: string; ativo: number };
+export const todosUtilizadores = () =>
+  query<Utilizador>("SELECT id, nome, email, cargo, ativo FROM users ORDER BY ativo DESC, nome");

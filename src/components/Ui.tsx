@@ -21,7 +21,7 @@ export function Stat({ rotulo, valor, destaque }: { rotulo: string; valor: strin
   return (
     <div className="card p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{rotulo}</p>
-      <p className={`mt-1 text-2xl font-semibold ${destaque ? "text-amber-600" : ""}`}>{valor}</p>
+      <p className={`mt-1 text-xl font-semibold sm:text-2xl ${destaque ? "text-amber-600" : ""}`}>{valor}</p>
     </div>
   );
 }

@@ -22,6 +22,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <CategoriaBadge categoria={f.categoria} />
                 {(f.predio_nome || f.maquina_numero) && <span className="text-xs text-slate-500">{f.predio_nome ?? `Máquina ${f.maquina_numero}`}</span>}
+                {f.empresa_nome && <span className="text-xs text-slate-400">· {f.empresa_nome}</span>}
                 {f.alerta && !f.revisada && <span className="badge bg-amber-100 text-amber-800">⚠ Rever</span>}
               </div>
             </Link>
@@ -33,7 +34,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
       <div className="card hidden overflow-hidden md:block">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>{["Data", "Fornecedor", "Categoria", "Prédio / Máquina", "Carregada por", "Total"].map((h, i) => (
+            <tr>{["Data", "Fornecedor", "Categoria", "Empresa", "Prédio / Máquina", "Total"].map((h, i) => (
               <th key={h} className={`px-4 py-3 font-medium ${i === 5 ? "text-right" : ""}`}>{h}</th>))}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
@@ -46,8 +47,8 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                   {f.alerta && !f.revisada && <p className="mt-0.5 text-xs text-amber-700">⚠ {f.alerta}</p>}
                 </td>
                 <td className="px-4 py-3"><CategoriaBadge categoria={f.categoria} /></td>
+                <td className="px-4 py-3 text-slate-600">{f.empresa_nome ?? "—"}</td>
                 <td className="px-4 py-3 text-slate-600">{f.predio_nome ?? (f.maquina_numero ? `Máquina ${f.maquina_numero}` : "—")}</td>
-                <td className="px-4 py-3 text-slate-600">{f.criado_por_nome}</td>
                 <td className="px-4 py-3 text-right font-medium">{money(f.total)}</td>
               </tr>
             ))}

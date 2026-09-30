@@ -1,16 +1,20 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listarFaturas, resumo } from "@/lib/queries";
+import { listarFaturas, resumo, todasEmpresas } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/db";
 import { CATEGORIA_INFO, money } from "@/lib/format";
 import FaturasLista from "@/components/FaturasLista";
 import { PageHeader, Stat } from "@/components/Ui";
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string }> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
-  const [faturas, r] = await Promise.all([listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1" }), resumo(user)]);
-  const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q }).filter(([, v]) => v) as [string, string][]).toString();
+  const empresaId = Number(sp.empresa) || undefined;
+  const mes = sp.mes && /^\d{4}-(0[1-9]|1[0-2])$/.test(sp.mes) ? sp.mes : undefined;
+  const [faturas, r, empresas] = await Promise.all([
+    listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1", empresa_id: empresaId, mes }), resumo(user), todasEmpresas(),
+  ]);
+  const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q, empresa: empresaId ? String(empresaId) : undefined, mes }).filter(([, v]) => v) as [string, string][]).toString();
 
   return (
     <>
@@ -23,7 +27,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
         <Stat rotulo="Este mês" valor={money(r.mes)} />
         <Stat rotulo="Total geral" valor={money(r.total)} />
         <Stat rotulo="Faturas" valor={String(r.n)} />
-        <Link href="/?alerta=1"><Stat rotulo="Para rever" valor={String(r.alertas)} destaque={r.alertas > 0} /></Link>
+        <Link href="/alertas"><Stat rotulo="Para rever" valor={String(r.alertas)} destaque={r.alertas > 0} /></Link>
       </div>
 
       {r.porCategoria.length > 1 && (
@@ -42,8 +46,13 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
           <option value="">Todas as categorias</option>
           {CATEGORIAS.map((c) => <option key={c} value={c}>{CATEGORIA_INFO[c].nome}</option>)}
         </select>
+        <select name="empresa" defaultValue={sp.empresa ?? ""} className="field sm:max-w-[12rem]">
+          <option value="">Todas as empresas</option>
+          {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
+        </select>
+        <input type="month" name="mes" defaultValue={mes ?? ""} className="field sm:max-w-[11rem]" aria-label="Mês" />
         <button className="btn-ghost">Filtrar</button>
-        {(sp.q || sp.categoria || sp.alerta) && <Link href="/" className="btn-ghost">Limpar</Link>}
+        {(sp.q || sp.categoria || sp.alerta || sp.empresa || sp.mes) && <Link href="/" className="btn-ghost">Limpar</Link>}
       </form>
 
       <FaturasLista faturas={faturas} />

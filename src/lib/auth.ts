@@ -18,8 +18,8 @@ export async function login(email: string, password: string): Promise<boolean | 
   const chave = email.trim().toLowerCase();
   const f = falhas.get(chave);
   if (f && f.ate > Date.now() && f.n >= MAX_FALHAS) return "bloqueado";
-  const row = await queryOne<User & { password_hash: string }>("SELECT * FROM users WHERE email = ?", [chave]);
-  if (!row || !verifyPassword(password, row.password_hash)) {
+  const row = await queryOne<User & { password_hash: string; ativo: number }>("SELECT * FROM users WHERE email = ?", [chave]);
+  if (!row || !row.ativo || !verifyPassword(password, row.password_hash)) {
     const atual = f && f.ate > Date.now() ? f : { n: 0, ate: Date.now() + JANELA_MS };
     falhas.set(chave, { n: atual.n + 1, ate: atual.ate });
     return false;
@@ -44,7 +44,7 @@ export async function getUser(): Promise<User | null> {
   if (!t) return null;
   const u = await queryOne<User>(
     `SELECT u.id,u.nome,u.email,u.cargo FROM sessions s JOIN users u ON u.id = s.user_id
-     WHERE s.token = ? AND s.expires_at > ?`,
+     WHERE s.token = ? AND s.expires_at > ? AND u.ativo = 1`,
     [t, Date.now()],
   );
   return u ?? null;

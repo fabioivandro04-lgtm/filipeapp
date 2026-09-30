@@ -1,10 +1,11 @@
 "use server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { query, queryOne, CATEGORIAS } from "@/lib/db";
+import { query, queryOne, CATEGORIAS, CARGOS } from "@/lib/db";
 import { cookies } from "next/headers";
 import { login, logout, requireUser } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
+import { avaliar } from "@/lib/alertas";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
@@ -83,6 +84,8 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   if (d?.duvidas) alerta = [alerta, d.duvidas].filter(Boolean).join(" ");
 
   const categoria = (CATEGORIAS as readonly string[]).includes(categoriaManual) ? categoriaManual : d?.categoria ?? "outros";
+  const avisos = await avaliar({ fornecedor: d?.fornecedor ?? null, nif: d?.nif_fornecedor ?? null, numero: d?.numero ?? null, data: d?.data ?? null, total: d?.total ?? null, categoria });
+  if (avisos.length) alerta = [alerta, ...avisos].filter(Boolean).join(" ");
   const fich = (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [file.type, bytes]))!;
   const nova = (await queryOne<{ id: number }>(
     `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,predio_id,maquina_id,identificador,itens,alerta)
@@ -111,12 +114,19 @@ export async function guardarFatura(id: number, form: FormData) {
   const predioId = num(form.get("predio_id"));
   const identificador = txt(form.get("identificador"));
   const revisada = form.get("revisada") ? 1 : 0;
+  const categoria = String(form.get("categoria"));
+  const total = num(form.get("total"));
+  // Ao guardar, os avisos são recalculados (marcar como revista limpa-os)
+  const avisos = revisada ? [] : await avaliar({
+    fornecedor: txt(form.get("fornecedor")), nif: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
+    total, categoria, excluirId: id, predioId,
+  });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,
-       predio_id=?, maquina_id=?, identificador=?, revisada=?, alerta = CASE WHEN ?::int = 1 THEN NULL ELSE alerta END WHERE id=?`,
-    [txt(form.get("fornecedor")), txt(form.get("nif")), txt(form.get("numero")), txt(form.get("data")), num(form.get("total")),
-      num(form.get("iva")), String(form.get("categoria")), empresaId, predioId, num(form.get("maquina_id")), identificador,
-      revisada, revisada, id],
+       predio_id=?, maquina_id=?, identificador=?, revisada=?, alerta=? WHERE id=?`,
+    [txt(form.get("fornecedor")), txt(form.get("nif")), txt(form.get("numero")), txt(form.get("data")), total,
+      num(form.get("iva")), categoria, empresaId, predioId, num(form.get("maquina_id")), identificador,
+      revisada, avisos.length ? avisos.join(" ") : null, id],
   );
   // Memoriza o identificador no prédio para ligar automaticamente as próximas faturas
   if (form.get("memorizar") && predioId && identificador) {
@@ -148,4 +158,66 @@ export async function criarMaquina(form: FormData) {
   if (u.cargo !== "admin") return;
   await query("INSERT INTO maquinas (numero_interno,descricao) VALUES (?,?) ON CONFLICT (numero_interno) DO NOTHING", [String(form.get("numero")), String(form.get("descricao") ?? "")]);
   revalidatePath("/maquinas");
+}
+
+// ---------- Gestão de utilizadores (só admin) ----------
+async function soAdmin() {
+  const u = await requireUser();
+  if (u.cargo !== "admin") redirect("/");
+  return u;
+}
+const voltar = (tipo: "ok" | "erro", msg: string): never => redirect(`/utilizadores?${tipo}=${encodeURIComponent(msg)}`);
+
+export async function criarUtilizador(form: FormData) {
+  await soAdmin();
+  const nome = String(form.get("nome") ?? "").trim();
+  const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const cargo = String(form.get("cargo") ?? "");
+  const senha = String(form.get("senha") ?? "");
+  if (!nome || email.length < 3 || /\s/.test(email)) voltar("erro", "Preencha o nome e um email válido (sem espaços).");
+  if (!(CARGOS as readonly string[]).includes(cargo)) voltar("erro", "Cargo inválido.");
+  if (senha.length < 10) voltar("erro", "A palavra-passe deve ter pelo menos 10 caracteres.");
+  const r = await queryOne<{ id: number }>(
+    "INSERT INTO users (nome,email,password_hash,cargo) VALUES (?,?,?,?) ON CONFLICT (email) DO NOTHING RETURNING id",
+    [nome, email, hashPassword(senha), cargo]);
+  if (!r) voltar("erro", "Já existe um utilizador com esse email.");
+  revalidatePath("/utilizadores");
+  voltar("ok", `Utilizador ${nome} criado.`);
+}
+
+/** O admin não altera a própria conta aqui: garante que há sempre pelo menos um admin ativo. */
+async function alvo(id: number) {
+  const eu = await soAdmin();
+  if (eu.id === id) voltar("erro", "Não pode alterar a sua própria conta aqui. Use «Alterar palavra-passe» no seu perfil.");
+  const u = await queryOne<{ id: number; nome: string; ativo: number }>("SELECT id, nome, ativo FROM users WHERE id = ?", [id]);
+  if (!u) voltar("erro", "Utilizador não encontrado.");
+  return u!;
+}
+
+export async function atualizarCargo(id: number, form: FormData) {
+  const u = await alvo(id);
+  const cargo = String(form.get("cargo") ?? "");
+  if (!(CARGOS as readonly string[]).includes(cargo)) voltar("erro", "Cargo inválido.");
+  await query("UPDATE users SET cargo = ? WHERE id = ?", [cargo, id]);
+  await query("DELETE FROM sessions WHERE user_id = ?", [id]); // obriga a entrar de novo com o cargo novo
+  revalidatePath("/utilizadores");
+  voltar("ok", `Cargo de ${u.nome} atualizado.`);
+}
+
+export async function alternarAtivo(id: number) {
+  const u = await alvo(id);
+  const novo = u.ativo ? 0 : 1;
+  await query("UPDATE users SET ativo = ? WHERE id = ?", [novo, id]);
+  if (!novo) await query("DELETE FROM sessions WHERE user_id = ?", [id]);
+  revalidatePath("/utilizadores");
+  voltar("ok", `${u.nome} ${novo ? "reativado" : "desativado"}.`);
+}
+
+export async function redefinirSenha(id: number, form: FormData) {
+  const u = await alvo(id);
+  const senha = String(form.get("senha") ?? "");
+  if (senha.length < 10) voltar("erro", "A palavra-passe deve ter pelo menos 10 caracteres.");
+  await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(senha), id]);
+  await query("DELETE FROM sessions WHERE user_id = ?", [id]);
+  voltar("ok", `Palavra-passe de ${u.nome} redefinida. Diga-lhe a nova palavra-passe.`);
 }

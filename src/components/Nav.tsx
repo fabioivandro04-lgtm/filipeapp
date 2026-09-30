@@ -6,6 +6,8 @@ const LINKS = [
   { href: "/", nome: "Faturas", icon: "🧾" },
   { href: "/predios", nome: "Prédios", icon: "🏢" },
   { href: "/maquinas", nome: "Máquinas", icon: "🚜" },
+  { href: "/relatorios", nome: "Relatórios", icon: "📊" },
+  { href: "/alertas", nome: "Alertas", icon: "⚠️" },
 ];
 
 export default function Nav({ user }: { user: User }) {
@@ -18,7 +20,7 @@ export default function Nav({ user }: { user: User }) {
             <span className="hidden sm:inline">GESTAO APP</span>
           </Link>
           <nav className="hidden gap-1 md:flex">
-            {LINKS.map((l) => (
+            {[...LINKS, ...(user.cargo === "admin" ? [{ href: "/utilizadores", nome: "Utilizadores", icon: "👥" }] : [])].map((l) => (
               <Link key={l.href} href={l.href} className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900">
                 {l.nome}
               </Link>
@@ -36,8 +38,8 @@ export default function Nav({ user }: { user: User }) {
       </header>
 
       {/* Barra inferior no telemóvel */}
-      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {[LINKS[0], { href: "/upload", nome: "Carregar", icon: "📷" }, LINKS[1], LINKS[2]].map((l) => (
+      <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
+        {[LINKS[0], { href: "/upload", nome: "Carregar", icon: "📷" }, LINKS[1], LINKS[2], { href: "/mais", nome: "Mais", icon: "☰" }].map((l) => (
           <Link key={l.href} href={l.href} className="flex flex-col items-center gap-0.5 py-2 text-xs text-slate-600">
             <span className="text-xl">{l.icon}</span>{l.nome}
           </Link>
