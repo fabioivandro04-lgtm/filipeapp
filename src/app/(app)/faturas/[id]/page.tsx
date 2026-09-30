@@ -5,6 +5,8 @@ import { obterFatura, todasEmpresas, todasMaquinas, todosPredios } from "@/lib/q
 import { CATEGORIAS } from "@/lib/categorias";
 import { money } from "@/lib/format";
 import { apagarFatura, guardarFatura } from "@/app/actions";
+import { listarHistorico } from "@/lib/historico";
+import HistoricoLista from "@/components/HistoricoLista";
 import { PageHeader } from "@/components/Ui";
 
 type Item = { descricao: string; quantidade: number | null; preco_unitario: number | null; total: number | null };
@@ -16,13 +18,21 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
   if (!f) notFound();
   const podeEditar = user.cargo === "admin" || user.cargo === "operador";
   const itens: Item[] = f.itens ? JSON.parse(f.itens) : [];
-  const [predios, maquinas, empresas] = await Promise.all([todosPredios(), todasMaquinas(), todasEmpresas()]);
+  const [predios, maquinas, empresas, registos] = await Promise.all([todosPredios(), todasMaquinas(), todasEmpresas(), listarHistorico({ faturaId: f.id, limite: 50 })]);
+  const nomes = {
+    empresas: Object.fromEntries(empresas.map((e) => [e.id, e.nome])),
+    predios: Object.fromEntries(predios.map((p) => [p.id, p.nome])),
+    maquinas: Object.fromEntries(maquinas.map((m) => [m.id, m.numero_interno])),
+  };
   const pdf = f.ficheiro_mime === "application/pdf";
 
   return (
     <>
       <Link href="/" className="text-sm text-slate-500 hover:text-slate-900">← Faturas</Link>
-      <div className="mt-2"><PageHeader titulo={f.fornecedor ?? "Fatura sem nome"} subtitulo={`Carregada por ${f.criado_por_nome} em ${f.criado_em.slice(0, 10)}`} /></div>
+      <div className="mt-2"><PageHeader titulo={f.fornecedor ?? "Fatura sem nome"} subtitulo={`Carregada por ${f.criado_por_nome} em ${f.criado_em.slice(0, 10)}`}>
+          {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>✓ QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
+          {f.enviada_em && <span className="badge bg-sky-100 text-sky-800">Enviada à contabilidade</span>}
+        </PageHeader></div>
 
       {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">⚠ {f.alerta}</p>}
 
@@ -70,6 +80,11 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
                 </select>
               </div>
               <Campo nome="identificador" rotulo="Nº contador / cliente" v={f.identificador} span />
+              <Campo nome="nif_adquirente" rotulo="NIF do cliente (a sua empresa)" v={f.nif_adquirente} span />
+              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" name="memorizar_empresa" defaultChecked className="h-4 w-4" />
+                Memorizar este NIF na empresa escolhida (as próximas faturas ligam-se sozinhas)
+              </label>
               <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
                 <input type="checkbox" name="memorizar" defaultChecked className="h-4 w-4" />
                 Memorizar este nº no prédio escolhido (liga as próximas faturas sozinho)
@@ -99,10 +114,13 @@ export default async function FaturaPage({ params }: { params: Promise<{ id: str
           )}
 
           {user.cargo === "admin" && (
-            <form action={apagarFatura.bind(null, f.id)}><button className="btn-danger">Apagar fatura</button></form>
+            <form action={apagarFatura.bind(null, f.id)}><button className="btn-danger">Apagar fatura</button><p className="mt-1 text-xs text-slate-500">Pode ser restaurada no Histórico.</p></form>
           )}
         </div>
       </div>
+
+      <h2 className="mb-3 mt-10 text-lg font-semibold">Histórico desta fatura</h2>
+      <HistoricoLista registos={registos} nomes={nomes} podeDesfazer={podeEditar} mostrarFatura={false} />
     </>
   );
 }

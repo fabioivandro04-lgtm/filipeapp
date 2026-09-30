@@ -39,7 +39,7 @@ async function criarDriver(): Promise<Driver> {
   };
 }
 
-const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas"];
+const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico"];
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -78,6 +78,24 @@ const SCHEMA = `
     itens TEXT,              -- JSON [{descricao, quantidade, preco_unitario, total}]
     alerta TEXT,             -- motivo de revisão manual
     revisada INTEGER NOT NULL DEFAULT 0
+  );
+  -- Campos vindos do QR fiscal da AT, envio à contabilidade e "apagar" recuperável
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS nif TEXT;
+  CREATE UNIQUE INDEX IF NOT EXISTS empresas_nif_uq ON empresas(nif) WHERE nif IS NOT NULL;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS atcud TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS nif_adquirente TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS tipo_doc TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS qr_lido INTEGER NOT NULL DEFAULT 0;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS enviada_em TEXT;
+  CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS historico (
+    id SERIAL PRIMARY KEY,
+    quando TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    user_id INTEGER REFERENCES users(id),
+    fatura_id INTEGER,
+    acao TEXT NOT NULL,
+    detalhe TEXT
   );
   -- No Supabase, sem RLS as tabelas ficariam legíveis por qualquer pessoa via API pública.
   -- Ativar RLS sem políticas bloqueia a API; a app liga-se com o utilizador da base de dados.

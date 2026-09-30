@@ -7,13 +7,15 @@ export type FaturaRow = {
   predio_id: number | null; maquina_id: number | null; empresa_id: number | null; empresa_nome: string | null;
   predio_nome: string | null; maquina_numero: string | null; identificador: string | null; itens: string | null;
   alerta: string | null; ficheiro_id: number | null; ficheiro_mime: string | null; revisada: number;
+  atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; enviada_em: string | null;
 };
 
 /** Condição SQL que limita as faturas às categorias que o cargo pode ver. */
 function visivel(u: User, alias = "f") {
+  const nao = `${alias}.apagada_em IS NULL`; // faturas apagadas ficam escondidas
   const vis = categoriasVisiveis(u);
-  if (vis === "todas") return { sql: "1=1", args: [] as string[] };
-  return { sql: `${alias}.categoria IN (${vis.map(() => "?").join(",")})`, args: [...vis] as string[] };
+  if (vis === "todas") return { sql: nao, args: [] as string[] };
+  return { sql: `${nao} AND ${alias}.categoria IN (${vis.map(() => "?").join(",")})`, args: [...vis] as string[] };
 }
 
 const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome,
@@ -21,7 +23,7 @@ const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.
   FROM faturas f JOIN users u ON u.id = f.criado_por
   LEFT JOIN predios p ON p.id = f.predio_id LEFT JOIN maquinas m ON m.id = f.maquina_id LEFT JOIN empresas e ON e.id = f.empresa_id`;
 
-export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean };
+export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean; pendentesEnvio?: boolean; limite?: number };
 
 export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<FaturaRow[]> {
   const v = visivel(u);
@@ -33,8 +35,9 @@ export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<Fatur
   if (filtro.maquina_id) { where.push("f.maquina_id = ?"); args.push(filtro.maquina_id); }
   if (filtro.empresa_id) { where.push("f.empresa_id = ?"); args.push(filtro.empresa_id); }
   if (filtro.mes) { where.push("substr(COALESCE(f.data,f.criado_em),1,7) = ?"); args.push(filtro.mes); }
+  if (filtro.pendentesEnvio) where.push("f.enviada_em IS NULL");
   if (filtro.alerta) where.push("f.alerta IS NOT NULL AND f.revisada = 0");
-  return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC LIMIT 500`, args);
+  return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC LIMIT ${Math.min(filtro.limite ?? 500, 5000)}`, args);
 }
 
 export async function obterFatura(u: User, id: number): Promise<FaturaRow | undefined> {
@@ -65,7 +68,8 @@ type Totais = { n: number; total: number };
 
 export const todosPredios = () => query<Predio>("SELECT * FROM predios ORDER BY nome");
 export const todasMaquinas = () => query<Maquina>("SELECT * FROM maquinas ORDER BY numero_interno");
-export const todasEmpresas = () => query<{ id: number; nome: string }>("SELECT * FROM empresas ORDER BY nome");
+export type Empresa = { id: number; nome: string; nif: string | null };
+export const todasEmpresas = () => query<Empresa>("SELECT * FROM empresas ORDER BY nome");
 
 export function prediosComTotais(u: User) {
   const v = visivel(u);

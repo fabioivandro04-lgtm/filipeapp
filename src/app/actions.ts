@@ -6,6 +6,12 @@ import { cookies } from "next/headers";
 import { login, logout, requireUser } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { avaliar } from "@/lib/alertas";
+import { lerQrFiscal } from "@/lib/qr";
+import { carregarFicheiro, faturasDoPacote, lerFiltro, marcarComoEnviadas, paraQuery } from "@/lib/contabilidade";
+import { emailConfigurado, enviarEmail, type Anexo } from "@/lib/email";
+import { excelFaturas, nomeFicheiro } from "@/lib/excel";
+import { guardarConfig } from "@/lib/config";
+import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
@@ -58,15 +64,39 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   if (file.size > MAX_BYTES) return { erro: `${file.name} é demasiado grande (máx. 4 MB). Tente uma foto em vez de PDF.` };
 
   const categoriaManual = String(form.get("categoria") ?? "");
-  const empresaId = await obterEmpresaId(String(form.get("empresa") ?? "").trim() || null);
   const bytes = Buffer.from(await file.arrayBuffer());
+  const qr = lerQrFiscal(String(form.get("qr") ?? "")); // QR fiscal da AT, lido no browser
+  const notas: string[] = [];
 
   let d: FaturaExtraida | null = null;
-  let alerta: string | null = null;
   if (extracaoDisponivel()) {
-    try { d = await extrairFatura(bytes, file.type); } catch (e) { alerta = `Leitura automática falhou: ${(e as Error).message}`; }
-  } else {
-    alerta = "Sem leitura automática (falta ANTHROPIC_API_KEY): preencha os dados à mão.";
+    try { d = await extrairFatura(bytes, file.type); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
+  } else if (!qr) {
+    notas.push("Sem leitura automática (falta ANTHROPIC_API_KEY): preencha os dados à mão.");
+  }
+
+  // Os dados do QR são exatos: têm prioridade sobre a leitura por IA
+  const nif = qr?.nifEmitente ?? d?.nif_fornecedor ?? null;
+  const total = qr?.total ?? d?.total ?? null;
+  if (qr && d?.total != null && qr.total != null && Math.abs(d.total - qr.total) > 0.01)
+    notas.push(`A leitura automática (${d.total}) difere do QR (${qr.total}); foi usado o valor do QR.`);
+
+  // Fornecedor e categoria: o que a IA leu, senão o último fornecedor conhecido com o mesmo NIF
+  let fornecedor = d?.fornecedor ?? null;
+  let categoriaHist: string | null = null;
+  if (nif) {
+    const h = await queryOne<{ fornecedor: string | null; categoria: string }>(
+      "SELECT fornecedor, categoria FROM faturas WHERE nif_fornecedor = ? AND apagada_em IS NULL ORDER BY id DESC LIMIT 1", [nif]);
+    fornecedor ??= h?.fornecedor ?? null;
+    categoriaHist = h?.categoria ?? null;
+  }
+  if (qr && !fornecedor) notas.push("Falta o nome do fornecedor.");
+
+  // Empresa: a que escreveu; senão a que tem o NIF do cliente lido no QR
+  let empresaId = await obterEmpresaId(String(form.get("empresa") ?? "").trim() || null);
+  if (!empresaId && qr?.nifAdquirente) {
+    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE nif = ?", [qr.nifAdquirente]))?.id ?? null;
+    if (!empresaId) notas.push(`O NIF do cliente ${qr.nifAdquirente} ainda não está associado a nenhuma empresa.`);
   }
 
   // Ligação por identificadores estáveis (nunca só pela morada: há moradas repetidas)
@@ -74,25 +104,30 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   if (d?.identificador) {
     const p = await queryOne<{ id: number }>("SELECT id FROM predios WHERE codigo_contador = ?", [d.identificador]);
     predioId = p?.id ?? null;
-    if (!p && (d.categoria === "energia" || d.categoria === "agua")) alerta = `Identificador ${d.identificador} não corresponde a nenhum prédio.`;
+    if (!p && (d.categoria === "energia" || d.categoria === "agua")) notas.push(`Identificador ${d.identificador} não corresponde a nenhum prédio.`);
   }
   if (d?.numero_interno_maquina) {
     const m = await queryOne<{ id: number }>("SELECT id FROM maquinas WHERE numero_interno = ?", [d.numero_interno_maquina]);
     maquinaId = m?.id ?? null;
-    if (!m) alerta = `Máquina ${d.numero_interno_maquina} não existe.`;
+    if (!m) notas.push(`Máquina ${d.numero_interno_maquina} não existe.`);
   }
-  if (d?.duvidas) alerta = [alerta, d.duvidas].filter(Boolean).join(" ");
+  if (d?.duvidas) notas.push(d.duvidas);
 
-  const categoria = (CATEGORIAS as readonly string[]).includes(categoriaManual) ? categoriaManual : d?.categoria ?? "outros";
-  const avisos = await avaliar({ fornecedor: d?.fornecedor ?? null, nif: d?.nif_fornecedor ?? null, numero: d?.numero ?? null, data: d?.data ?? null, total: d?.total ?? null, categoria });
-  if (avisos.length) alerta = [alerta, ...avisos].filter(Boolean).join(" ");
+  const categoria = (CATEGORIAS as readonly string[]).includes(categoriaManual) ? categoriaManual : d?.categoria ?? categoriaHist ?? "outros";
+  const numero = qr?.numero ?? d?.numero ?? null;
+  const data = qr?.data ?? d?.data ?? null;
+  notas.push(...(await avaliar({ fornecedor, nif, numero, data, total, categoria, atcud: qr?.atcud ?? null })));
+
   const fich = (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [file.type, bytes]))!;
   const nova = (await queryOne<{ id: number }>(
-    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,predio_id,maquina_id,identificador,itens,alerta)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-    [user.id, fich.id, d?.fornecedor ?? null, d?.nif_fornecedor ?? null, d?.numero ?? null, d?.data ?? null, d?.total ?? null,
-      d?.iva ?? null, categoria, empresaId, predioId, maquinaId, d?.identificador ?? null, d ? JSON.stringify(d.itens) : null, alerta],
+    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,predio_id,maquina_id,
+       identificador,itens,alerta,atcud,nif_adquirente,tipo_doc,qr_lido)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+    [user.id, fich.id, fornecedor, nif, numero, data, total, qr?.totalIva ?? d?.iva ?? null, categoria, empresaId, predioId, maquinaId,
+      d?.identificador ?? null, d ? JSON.stringify(d.itens) : null, notas.length ? notas.join(" ") : null,
+      qr?.atcud ?? null, qr?.nifAdquirente ?? null, qr?.tipo ?? null, qr ? 1 : 0],
   ))!;
+  await registar(user, nova.id, "criada", { fornecedor, numero, total, qr: !!qr });
   revalidatePath("/", "layout");
   return { id: nova.id };
 }
@@ -109,41 +144,84 @@ async function podeEditar() {
 }
 
 export async function guardarFatura(id: number, form: FormData) {
-  if (!(await podeEditar())) return;
+  const user = await podeEditar();
+  if (!user) return;
+  const antes = await queryOne<Record<string, unknown>>("SELECT * FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!antes) return;
   const empresaId = await obterEmpresaId(txt(form.get("empresa")));
   const predioId = num(form.get("predio_id"));
   const identificador = txt(form.get("identificador"));
+  const nifAdquirente = txt(form.get("nif_adquirente"));
   const revisada = form.get("revisada") ? 1 : 0;
-  const categoria = String(form.get("categoria"));
-  const total = num(form.get("total"));
+  const depois = {
+    fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
+    total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
+    predio_id: predioId, maquina_id: num(form.get("maquina_id")), identificador, nif_adquirente: nifAdquirente, revisada,
+  };
   // Ao guardar, os avisos são recalculados (marcar como revista limpa-os)
   const avisos = revisada ? [] : await avaliar({
-    fornecedor: txt(form.get("fornecedor")), nif: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
-    total, categoria, excluirId: id, predioId,
+    fornecedor: depois.fornecedor, nif: depois.nif_fornecedor, numero: depois.numero, data: depois.data,
+    total: depois.total, categoria: depois.categoria, excluirId: id, predioId, atcud: (antes.atcud as string | null) ?? null,
   });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,
-       predio_id=?, maquina_id=?, identificador=?, revisada=?, alerta=? WHERE id=?`,
-    [txt(form.get("fornecedor")), txt(form.get("nif")), txt(form.get("numero")), txt(form.get("data")), total,
-      num(form.get("iva")), categoria, empresaId, predioId, num(form.get("maquina_id")), identificador,
-      revisada, avisos.length ? avisos.join(" ") : null, id],
+       predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, alerta=? WHERE id=?`,
+    [depois.fornecedor, depois.nif_fornecedor, depois.numero, depois.data, depois.total, depois.iva, depois.categoria, empresaId,
+      predioId, depois.maquina_id, identificador, nifAdquirente, revisada, avisos.length ? avisos.join(" ") : null, id],
   );
-  // Memoriza o identificador no prédio para ligar automaticamente as próximas faturas
-  if (form.get("memorizar") && predioId && identificador) {
+  const mudou = diferencas(antes, depois);
+  if (Object.keys(mudou).length) await registar(user, id, "editada", mudou);
+
+  // Memoriza para ligar automaticamente as próximas faturas
+  if (form.get("memorizar") && predioId && identificador)
     await query("UPDATE predios SET codigo_contador = ? WHERE id = ? AND codigo_contador IS NULL", [identificador, predioId]);
-  }
+  if (form.get("memorizar_empresa") && empresaId && nifAdquirente)
+    await query("UPDATE empresas SET nif = ? WHERE id = ? AND nif IS NULL AND NOT EXISTS (SELECT 1 FROM empresas e2 WHERE e2.nif = ?)", [nifAdquirente, empresaId, nifAdquirente]);
   revalidatePath("/", "layout");
   redirect("/");
 }
 
+/** «Apagar» é recuperável: a fatura e o ficheiro ficam guardados e o admin pode restaurar no Histórico. */
 export async function apagarFatura(id: number) {
   const u = await requireUser();
   if (u.cargo !== "admin") return;
-  const f = await queryOne<{ ficheiro_id: number | null }>("SELECT ficheiro_id FROM faturas WHERE id = ?", [id]);
-  await query("DELETE FROM faturas WHERE id = ?", [id]);
-  if (f?.ficheiro_id) await query("DELETE FROM ficheiros WHERE id = ?", [f.ficheiro_id]);
+  const f = await queryOne<{ fornecedor: string | null; numero: string | null; total: number | null }>("SELECT fornecedor, numero, total FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!f) return;
+  await query("UPDATE faturas SET apagada_em = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') WHERE id = ?", [id]);
+  await registar(u, id, "apagada", f);
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+export async function restaurarFatura(id: number) {
+  const u = await requireUser();
+  if (u.cargo !== "admin") return;
+  await query("UPDATE faturas SET apagada_em = NULL WHERE id = ?", [id]);
+  await registar(u, id, "restaurada");
+  revalidatePath("/", "layout");
+  redirect(`/faturas/${id}`);
+}
+
+/** Desfaz uma edição registada no histórico (repõe os valores anteriores). */
+export async function reverterAlteracao(historicoId: number) {
+  const u = await podeEditar();
+  if (!u) return;
+  const h = await queryOne<{ id: number; fatura_id: number | null; acao: string; detalhe: string | null }>(
+    "SELECT id, fatura_id, acao, detalhe FROM historico WHERE id = ?", [historicoId]);
+  if (!h || h.acao !== "editada" || !h.fatura_id || !h.detalhe) return;
+  const diff = JSON.parse(h.detalhe) as Diferencas;
+  const sets: string[] = [];
+  const args: unknown[] = [];
+  for (const [campo, [antes]] of Object.entries(diff)) {
+    if (!(CAMPOS_EDITAVEIS as readonly string[]).includes(campo)) continue; // só colunas conhecidas
+    sets.push(`${campo}=?`);
+    args.push(antes);
+  }
+  if (!sets.length) return;
+  await query(`UPDATE faturas SET ${sets.join(", ")} WHERE id = ? AND apagada_em IS NULL`, [...args, h.fatura_id]);
+  await registar(u, h.fatura_id, "revertida", { desfeito: h.id });
+  revalidatePath("/", "layout");
+  redirect(`/faturas/${h.fatura_id}`);
 }
 
 export async function criarPredio(form: FormData) {
@@ -220,4 +298,78 @@ export async function redefinirSenha(id: number, form: FormData) {
   await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(senha), id]);
   await query("DELETE FROM sessions WHERE user_id = ?", [id]);
   voltar("ok", `Palavra-passe de ${u.nome} redefinida. Diga-lhe a nova palavra-passe.`);
+}
+
+// ---------- Empresas (só admin) ----------
+const voltarEmpresas = (tipo: "ok" | "erro", msg: string): never => redirect(`/empresas?${tipo}=${encodeURIComponent(msg)}`);
+
+export async function guardarEmpresa(id: number | null, form: FormData) {
+  const u = await requireUser();
+  if (u.cargo !== "admin") redirect("/");
+  const nome = String(form.get("nome") ?? "").trim();
+  const nif = String(form.get("nif") ?? "").replace(/\s/g, "") || null;
+  if (!nome) voltarEmpresas("erro", "Escreva o nome da empresa.");
+  if (nif && !/^\d{9}$/.test(nif)) voltarEmpresas("erro", "O NIF deve ter 9 números.");
+  try {
+    if (id) await query("UPDATE empresas SET nome = ?, nif = ? WHERE id = ?", [nome, nif, id]);
+    else await query("INSERT INTO empresas (nome, nif) VALUES (?, ?)", [nome, nif]);
+  } catch {
+    voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF.");
+  }
+  revalidatePath("/empresas");
+  voltarEmpresas("ok", id ? "Empresa atualizada." : `Empresa ${nome} criada.`);
+}
+
+// ---------- Envio à contabilidade ----------
+const MAX_ANEXOS = 20 * 1024 * 1024; // a maioria dos servidores de email recusa mais do que ~25 MB
+
+export async function enviarContabilidade(form: FormData) {
+  const user = await podeEditar();
+  if (!user) redirect("/");
+  const filtro = lerFiltro({ mes: form.get("mes"), empresa: form.get("empresa"), estado: form.get("estado") });
+  const voltar = (tipo: "ok" | "erro", msg: string): never => redirect(`/contabilidade?${paraQuery(filtro)}&${tipo}=${encodeURIComponent(msg)}`);
+
+  if (!emailConfigurado()) voltar("erro", "O envio por email ainda não está configurado. Use «Descarregar ZIP» ou veja as instruções na página.");
+  const para = String(form.get("para") ?? "").split(/[,;\s]+/).filter(Boolean);
+  if (!para.length || !para.every((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))) voltar("erro", "Escreva um email de destino válido.");
+  const faturas = await faturasDoPacote(user, filtro);
+  if (!faturas.length) voltar("erro", "Não há faturas para enviar neste período.");
+
+  // O Excel resume; os originais vão em anexo com o QR code intacto (para o TOConline os ler)
+  const anexos: Anexo[] = [{ filename: `faturas-${filtro.mes}.xlsx`, content: await excelFaturas(faturas, "") }];
+  let bytes = anexos[0].content.length;
+  for (const f of faturas) {
+    if (!f.ficheiro_id) continue;
+    const fi = await carregarFicheiro(f.ficheiro_id);
+    if (!fi) continue;
+    bytes += fi.dados.length;
+    if (bytes > MAX_ANEXOS) voltar("erro", "Os anexos passam os 20 MB. Use «Descarregar ZIP» e envie por outro meio, ou envie por empresa.");
+    anexos.push({ filename: nomeFicheiro(f), content: Buffer.from(fi.dados) });
+  }
+
+  let erro: string | null = null;
+  try {
+    await enviarEmail({ para, assunto: String(form.get("assunto") ?? "").trim() || `Faturas ${filtro.mes}`, texto: String(form.get("mensagem") ?? ""), anexos });
+  } catch (e) {
+    erro = `Falha ao enviar: ${(e as Error).message}`;
+  }
+  if (erro) voltar("erro", erro);
+
+  await marcarComoEnviadas(faturas.map((f) => f.id));
+  for (const f of faturas) await registar(user, f.id, "enviada", { para });
+  await guardarConfig("email_contabilidade", para.join(", "));
+  revalidatePath("/", "layout");
+  voltar("ok", `Enviado para ${para.join(", ")}: ${faturas.length} faturas.`);
+}
+
+/** Para quem descarregou o ZIP e enviou por outro meio (WhatsApp, email próprio…). */
+export async function marcarEnviadas(form: FormData) {
+  const user = await podeEditar();
+  if (!user) redirect("/");
+  const filtro = lerFiltro({ mes: form.get("mes"), empresa: form.get("empresa"), estado: form.get("estado") });
+  const faturas = await faturasDoPacote(user, filtro);
+  await marcarComoEnviadas(faturas.map((f) => f.id));
+  for (const f of faturas) await registar(user, f.id, "enviada", { via: "manual" });
+  revalidatePath("/", "layout");
+  redirect(`/contabilidade?${paraQuery(filtro)}&ok=${encodeURIComponent(`${faturas.length} faturas marcadas como enviadas.`)}`);
 }

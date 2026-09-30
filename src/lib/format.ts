@@ -10,3 +10,7 @@ export const CATEGORIA_INFO: Record<string, { nome: string; cor: string }> = {
   maquinas: { nome: "Máquinas", cor: "bg-orange-100 text-orange-800" },
   outros: { nome: "Outros", cor: "bg-slate-100 text-slate-700" },
 };
+
+const MESES_EXTENSO = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+/** "2026-06" → "junho de 2026" */
+export const mesExtenso = (m: string) => `${MESES_EXTENSO[Number(m.slice(5, 7)) - 1]} de ${m.slice(0, 4)}`;

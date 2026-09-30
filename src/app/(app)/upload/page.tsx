@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { carregarFatura } from "@/app/actions";
 import { CATEGORIAS } from "@/lib/categorias";
+import { lerQrDoFicheiro } from "@/lib/qr-cliente";
 import { PageHeader } from "@/components/Ui";
 
 /** Reduz fotos grandes no telemóvel (o servidor só aceita ~4 MB por pedido). */
@@ -46,6 +47,7 @@ export default function Upload() {
         const fd = new FormData();
         fd.set("empresa", String(fd0.get("empresa") ?? ""));
         fd.set("categoria", String(fd0.get("categoria") ?? ""));
+        fd.set("qr", (await lerQrDoFicheiro(files[i])) ?? ""); // QR fiscal, lido no original (antes de comprimir)
         fd.set("ficheiro", await comprimir(files[i]));
         const r = await carregarFatura(fd);
         if (r.erro) { setErro(r.erro); setEstado(null); return; }
@@ -62,7 +64,7 @@ export default function Upload() {
 
   return (
     <div className="mx-auto max-w-xl">
-      <PageHeader titulo="Carregar faturas" subtitulo="Tire uma foto ou escolha ficheiros. A app lê os dados sozinha." />
+      <PageHeader titulo="Carregar faturas" subtitulo="Tire uma foto ou escolha ficheiros. A app lê o QR code fiscal e os dados sozinha." />
       <form onSubmit={enviar} className="card space-y-5 p-5">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="btn-primary cursor-pointer py-4">

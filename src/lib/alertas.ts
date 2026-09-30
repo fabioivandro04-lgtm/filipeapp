@@ -3,6 +3,8 @@ import { queryOne } from "./db";
 type Dados = {
   fornecedor: string | null; nif: string | null; numero: string | null; data: string | null; total: number | null;
   categoria: string; excluirId?: number;
+  /** ATCUD do QR fiscal: é único por documento, por isso é o melhor detetor de duplicados. */
+  atcud?: string | null;
   /** Só na edição: avisa se uma fatura de água/energia ficou sem prédio. */
   predioId?: number | null;
 };
@@ -13,20 +15,24 @@ export async function avaliar(d: Dados): Promise<string[]> {
   const excluir = d.excluirId ?? 0;
 
   // 1) Duplicado: mesmo nº + mesmo fornecedor (NIF ou nome), ou mesmo fornecedor + data + valor
+  if (d.atcud) {
+    const igual = await queryOne<{ id: number }>("SELECT id FROM faturas WHERE atcud = ? AND id <> ? AND apagada_em IS NULL LIMIT 1", [d.atcud, excluir]);
+    if (igual) avisos.push(`Possível duplicado da fatura #${igual.id} (mesmo ATCUD).`);
+  }
   const chave = d.nif ? { sql: "nif_fornecedor = ?", v: d.nif } : d.fornecedor ? { sql: "LOWER(fornecedor) = LOWER(?)", v: d.fornecedor } : null;
   if (chave) {
     let dup: { id: number } | undefined;
-    if (d.numero) dup = await queryOne<{ id: number }>(`SELECT id FROM faturas WHERE numero = ? AND ${chave.sql} AND id <> ? LIMIT 1`, [d.numero, chave.v, excluir]);
+    if (d.numero) dup = await queryOne<{ id: number }>(`SELECT id FROM faturas WHERE numero = ? AND ${chave.sql} AND id <> ? AND apagada_em IS NULL LIMIT 1`, [d.numero, chave.v, excluir]);
     if (!dup && d.data && d.total != null)
-      dup = await queryOne<{ id: number }>(`SELECT id FROM faturas WHERE data = ? AND total = ? AND ${chave.sql} AND id <> ? LIMIT 1`, [d.data, d.total, chave.v, excluir]);
-    if (dup) avisos.push(`Possível duplicado da fatura #${dup.id}.`);
+      dup = await queryOne<{ id: number }>(`SELECT id FROM faturas WHERE data = ? AND total = ? AND ${chave.sql} AND id <> ? AND apagada_em IS NULL LIMIT 1`, [d.data, d.total, chave.v, excluir]);
+    if (dup && !avisos.length) avisos.push(`Possível duplicado da fatura #${dup.id}.`);
   }
 
   // 2) Valor fora do normal: mais de 1,8× a média deste fornecedor (com pelo menos 3 faturas anteriores)
   if (d.fornecedor && d.total && d.total > 0) {
     const h = await queryOne<{ n: number; media: number }>(
       `SELECT COUNT(*)::int AS n, COALESCE(AVG(total),0)::float8 AS media FROM faturas
-       WHERE LOWER(fornecedor) = LOWER(?) AND categoria = ? AND total IS NOT NULL AND id <> ?`,
+       WHERE LOWER(fornecedor) = LOWER(?) AND categoria = ? AND total IS NOT NULL AND id <> ? AND apagada_em IS NULL`,
       [d.fornecedor, d.categoria, excluir],
     );
     if (h && h.n >= 3 && h.media > 0 && d.total > 1.8 * h.media)
