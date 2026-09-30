@@ -2,6 +2,8 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { listarFaturas, resumo, todasEmpresas } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/db";
+import { editaDireto } from "@/lib/auth";
+import { criarFaturaManual } from "@/app/actions";
 import { CATEGORIA_INFO, money } from "@/lib/format";
 import FaturasLista from "@/components/FaturasLista";
 import { PageHeader, Stat } from "@/components/Ui";
@@ -20,7 +22,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
     <>
       <PageHeader titulo="Faturas" subtitulo="Tudo o que foi carregado, por ordem de data.">
         <a href={`/api/export?${qs}`} className="btn-ghost">Exportar Excel</a>
-        <Link href="/upload" className="btn-primary md:hidden">+ Carregar</Link>
+        {editaDireto(user) && <form action={criarFaturaManual}><button className="btn-ghost">+ Fatura manual</button></form>}
+        {editaDireto(user) && <Link href="/upload" className="btn-primary md:hidden">+ Carregar</Link>}
       </PageHeader>
 
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">

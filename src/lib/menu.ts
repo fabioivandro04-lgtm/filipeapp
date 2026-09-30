@@ -22,6 +22,7 @@ export function extras(u: User, pendentes = 0): ItemMenu[] {
     ...(admin ? [
       { href: "/empresas", nome: "Empresas", desc: "Nome, NIF e morada das suas empresas", icon: "🏛️" },
       { href: "/utilizadores", nome: "Utilizadores", desc: "Criar pessoas e definir o cargo", icon: "👥" },
+      { href: "/apagados", nome: "Apagados", desc: "Restaurar faturas, empresas, prédios, máquinas e utilizadores", icon: "🗑️" },
       { href: "/historico", nome: "Histórico", desc: "Quem fez o quê, com opção de desfazer", icon: "🕘" },
       { href: "/copias", nome: "Cópia de segurança", desc: "Descarregar todos os dados e faturas", icon: "💾" },
     ] : []),

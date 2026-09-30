@@ -60,20 +60,22 @@ export async function resumo(u: User) {
   return { ...r, porCategoria };
 }
 
-export type Predio = { id: number; nome: string; morada: string | null; codigo_contador: string | null };
-export type Maquina = { id: number; numero_interno: string; descricao: string | null };
+export type Predio = { id: number; nome: string; morada: string | null; codigo_contador: string | null; apagada_em: string | null };
+export type Maquina = { id: number; numero_interno: string; descricao: string | null; apagada_em: string | null };
 type Totais = { n: number; total: number };
 
-export const todosPredios = () => query<Predio>("SELECT * FROM predios ORDER BY nome");
-export const todasMaquinas = () => query<Maquina>("SELECT * FROM maquinas ORDER BY numero_interno");
-export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null };
-export const todasEmpresas = () => query<Empresa>("SELECT * FROM empresas ORDER BY nome");
+// Por defeito só os ativos (listas e escolhas); `true` inclui os apagados (para mostrar nomes em faturas e histórico antigos).
+const ativo = (incluirApagados: boolean) => (incluirApagados ? "" : "WHERE apagada_em IS NULL");
+export const todosPredios = (incluirApagados = false) => query<Predio>(`SELECT * FROM predios ${ativo(incluirApagados)} ORDER BY nome`);
+export const todasMaquinas = (incluirApagados = false) => query<Maquina>(`SELECT * FROM maquinas ${ativo(incluirApagados)} ORDER BY numero_interno`);
+export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null; apagada_em: string | null };
+export const todasEmpresas = (incluirApagadas = false) => query<Empresa>(`SELECT * FROM empresas ${ativo(incluirApagadas)} ORDER BY nome`);
 
 export function prediosComTotais(u: User) {
   const v = visivel(u);
   return query<Predio & Totais>(
     `SELECT p.*, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS total FROM predios p
-     LEFT JOIN faturas f ON f.predio_id = p.id AND ${v.sql} GROUP BY p.id ORDER BY p.nome`,
+     LEFT JOIN faturas f ON f.predio_id = p.id AND ${v.sql} WHERE p.apagada_em IS NULL GROUP BY p.id ORDER BY p.nome`,
     v.args,
   );
 }
@@ -82,7 +84,7 @@ export function maquinasComTotais(u: User) {
   const v = visivel(u);
   return query<Maquina & Totais>(
     `SELECT m.*, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS total FROM maquinas m
-     LEFT JOIN faturas f ON f.maquina_id = m.id AND ${v.sql} GROUP BY m.id ORDER BY m.numero_interno`,
+     LEFT JOIN faturas f ON f.maquina_id = m.id AND ${v.sql} WHERE m.apagada_em IS NULL GROUP BY m.id ORDER BY m.numero_interno`,
     v.args,
   );
 }
@@ -182,7 +184,7 @@ export const todosUtilizadores = () =>
 export type Nomes = { empresas: Record<number, string>; predios: Record<number, string>; maquinas: Record<number, string> };
 
 export async function carregarNomes(): Promise<Nomes> {
-  const [e, p, m] = await Promise.all([todasEmpresas(), todosPredios(), todasMaquinas()]);
+  const [e, p, m] = await Promise.all([todasEmpresas(true), todosPredios(true), todasMaquinas(true)]);
   return {
     empresas: Object.fromEntries(e.map((x) => [x.id, x.nome])),
     predios: Object.fromEntries(p.map((x) => [x.id, x.nome])),
@@ -219,4 +221,23 @@ export async function listarPropostas(o: { estado?: string[]; faturaId?: number;
 
 export async function contarPropostasPendentes(): Promise<number> {
   return (await queryOne<{ n: number }>("SELECT COUNT(*)::int AS n FROM propostas WHERE estado = 'pendente'"))?.n ?? 0;
+}
+
+/** Empresas ativas com o nº de faturas de cada uma (para avisar antes de apagar). */
+export const empresasComContagem = () =>
+  query<Empresa & { faturas: number }>(
+    `SELECT e.*, (SELECT COUNT(*)::int FROM faturas f WHERE f.empresa_id = e.id AND f.apagada_em IS NULL) AS faturas
+     FROM empresas e WHERE e.apagada_em IS NULL ORDER BY e.nome`);
+
+// ---------- Apagados (para restaurar) ----------
+export async function listarApagados() {
+  const [faturas, empresas, predios, maquinas, utilizadores] = await Promise.all([
+    query<{ id: number; fornecedor: string | null; numero: string | null; total: number | null; data: string | null; apagada_em: string }>(
+      "SELECT id, fornecedor, numero, total, data, apagada_em FROM faturas WHERE apagada_em IS NOT NULL ORDER BY apagada_em DESC LIMIT 200"),
+    query<{ id: number; nome: string; nif: string | null; apagada_em: string }>("SELECT id, nome, nif, apagada_em FROM empresas WHERE apagada_em IS NOT NULL ORDER BY apagada_em DESC"),
+    query<{ id: number; nome: string; morada: string | null; apagada_em: string }>("SELECT id, nome, morada, apagada_em FROM predios WHERE apagada_em IS NOT NULL ORDER BY apagada_em DESC"),
+    query<{ id: number; numero_interno: string; descricao: string | null; apagada_em: string }>("SELECT id, numero_interno, descricao, apagada_em FROM maquinas WHERE apagada_em IS NOT NULL ORDER BY apagada_em DESC"),
+    query<{ id: number; nome: string; email: string; cargo: string }>("SELECT id, nome, email, cargo FROM users WHERE ativo = 0 ORDER BY nome"),
+  ]);
+  return { faturas, empresas, predios, maquinas, utilizadores };
 }

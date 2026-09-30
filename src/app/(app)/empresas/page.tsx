@@ -1,18 +1,22 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { nifValido } from "@/lib/nif";
-import { todasEmpresas } from "@/lib/queries";
-import { guardarEmpresa } from "@/app/actions";
+import { empresasComContagem } from "@/lib/queries";
+import { apagarEntidade, guardarEmpresa } from "@/app/actions";
+import ConfirmarBotao from "@/components/ConfirmarBotao";
 import { PageHeader } from "@/components/Ui";
 
 export default async function Empresas({ searchParams }: { searchParams: Promise<{ ok?: string; erro?: string }> }) {
   const user = await requireUser();
   if (user.cargo !== "admin") redirect("/");
   const sp = await searchParams;
-  const empresas = await todasEmpresas();
+  const empresas = await empresasComContagem();
   return (
     <>
-      <PageHeader titulo="Empresas" subtitulo="Com o NIF, as faturas ficam associadas à empresa certa sozinhas: o NIF do cliente vem no QR code da fatura." />
+      <PageHeader titulo="Empresas" subtitulo="Com o NIF, as faturas ficam associadas à empresa certa sozinhas: o NIF do cliente vem no QR code da fatura.">
+        <Link href="/apagados" className="btn-ghost">Ver apagadas</Link>
+      </PageHeader>
       {sp.ok && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{sp.ok}</p>}
       {sp.erro && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sp.erro}</p>}
 
@@ -28,7 +32,16 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
             <form action={guardarEmpresa.bind(null, e.id)} className="space-y-3">
               <Campos e={e} />
               {e.nif && !nifValido(e.nif) && <p className="text-sm text-amber-800">⚠ O NIF {e.nif} não é válido (dígito de controlo). Confirme o número: com um NIF errado, as faturas não se associam sozinhas.</p>}
-              <button className="btn-ghost">Guardar</button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button className="btn-ghost">Guardar</button>
+                <span className="text-xs text-slate-500">{e.faturas} fatura(s)</span>
+              </div>
+            </form>
+            <form action={apagarEntidade.bind(null, "empresas", e.id)} className="mt-2">
+              <ConfirmarBotao className="btn-danger px-3 py-1.5 text-xs"
+                mensagem={`Apagar a empresa «${e.nome}»?${e.faturas ? ` As ${e.faturas} faturas ligadas mantêm-se.` : ""} Pode restaurá-la em Apagados.`}>
+                Apagar empresa
+              </ConfirmarBotao>
             </form>
           </li>
         ))}

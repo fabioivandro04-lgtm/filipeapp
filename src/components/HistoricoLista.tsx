@@ -6,6 +6,14 @@ import type { Nomes } from "@/lib/queries";
 import DiffLista from "./Diff";
 import { restaurarFatura, reverterAlteracao } from "@/app/actions";
 
+const TIPO: Record<string, string> = { empresa: "a empresa", predio: "o prédio", maquina: "a máquina", utilizador: "o utilizador" };
+const VERBO: Record<string, string> = { criada: "criou", editada: "editou", apagada: "apagou", restaurada: "restaurou" };
+/** «empresa_apagada» → «apagou a empresa» */
+function acaoEntidade(acao: string): string | null {
+  const [tipo, estado] = acao.split("_");
+  return TIPO[tipo] && VERBO[estado] ? `${VERBO[estado]} ${TIPO[tipo]}` : null;
+}
+
 const ACAO: Record<string, string> = {
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
   revertida: "desfez uma alteração", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
@@ -22,7 +30,8 @@ export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarF
           <li key={r.id} className="p-4 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <p>
-                <span className="font-medium">{r.user_nome ?? "Sistema"}</span> {ACAO[r.acao] ?? r.acao}
+                <span className="font-medium">{r.user_nome ?? "Sistema"}</span> {ACAO[r.acao] ?? acaoEntidade(r.acao) ?? r.acao}
+                {!r.fatura_id && det?.nome && <> <span className="font-medium">{det.nome}</span></>}
                 {mostrarFatura && r.fatura_id && (
                   <> — {r.fatura_apagada === null
                     ? <Link href={`/faturas/${r.fatura_id}`} className="text-brand-600 hover:underline">{r.fatura_fornecedor ?? `fatura #${r.fatura_id}`} {r.fatura_numero}</Link>

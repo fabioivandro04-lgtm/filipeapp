@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { todosUtilizadores } from "@/lib/queries";
 import { CARGOS } from "@/lib/db";
 import { alternarAtivo, atualizarCargo, criarUtilizador, redefinirSenha } from "@/app/actions";
+import ConfirmarBotao from "@/components/ConfirmarBotao";
 import { PageHeader } from "@/components/Ui";
 
 const cargoNome = (c: string) =>
@@ -38,7 +39,13 @@ export default async function Utilizadores({ searchParams }: { searchParams: Pro
                   <p className="font-medium">{u.nome} {sou && <span className="badge ml-1 bg-brand-100 text-brand-700">você</span>} {!u.ativo && <span className="badge ml-1 bg-slate-200 text-slate-700">desativado</span>}</p>
                   <p className="text-sm text-slate-500">{u.email}</p>
                 </div>
-                {!sou && <form action={alternarAtivo.bind(null, u.id)}><button className={u.ativo ? "btn-danger" : "btn-ghost"}>{u.ativo ? "Desativar" : "Reativar"}</button></form>}
+                {!sou && (
+                  <form action={alternarAtivo.bind(null, u.id)}>
+                    {u.ativo
+                      ? <ConfirmarBotao className="btn-danger" mensagem={`Desativar ${u.nome}? Deixa de poder entrar (pode reativar quando quiser).`}>Desativar</ConfirmarBotao>
+                      : <button className="btn-ghost">Reativar</button>}
+                  </form>
+                )}
               </div>
               {!sou && u.ativo === 1 && (
                 <div className="mt-3 grid gap-3 md:grid-cols-2">

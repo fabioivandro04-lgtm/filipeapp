@@ -50,11 +50,14 @@ const MAX_BYTES = 4 * 1024 * 1024;
 
 export type ResultadoUpload = { id?: number; erro?: string };
 
-async function obterEmpresaId(nome: string | null): Promise<number | null> {
+/** Procura a empresa pelo nome (cria se não existir). Devolve "apagada" se existir mas estiver apagada. */
+async function obterEmpresaId(nome: string | null): Promise<number | null | "apagada"> {
   if (!nome) return null;
-  await query("INSERT INTO empresas (nome) VALUES (?) ON CONFLICT (nome) DO NOTHING", [nome]);
-  return (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE nome = ?", [nome]))!.id;
+  const e = await queryOne<{ id: number; apagada_em: string | null }>("SELECT id, apagada_em FROM empresas WHERE LOWER(nome) = LOWER(?)", [nome]);
+  if (e) return e.apagada_em ? "apagada" : e.id;
+  return (await queryOne<{ id: number }>("INSERT INTO empresas (nome) VALUES (?) RETURNING id", [nome]))!.id;
 }
+const MSG_EMPRESA_APAGADA = (n: string) => `A empresa «${n}» foi apagada. Peça a um administrador para a restaurar (Mais → Apagados).`;
 
 /** Guarda e lê UMA fatura. O browser chama-a uma vez por ficheiro. */
 export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
@@ -67,6 +70,9 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
 
   const categoriaManual = String(form.get("categoria") ?? "");
   const bytes = Buffer.from(await file.arrayBuffer());
+  const nomeEmpresa = String(form.get("empresa") ?? "").trim() || null;
+  let empresaId = await obterEmpresaId(nomeEmpresa);
+  if (empresaId === "apagada") return { erro: MSG_EMPRESA_APAGADA(nomeEmpresa!) };
   const qr = lerQrFiscal(String(form.get("qr") ?? "")); // QR fiscal da AT, lido no browser
   const notas: string[] = [];
 
@@ -95,21 +101,20 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   if (qr && !fornecedor) notas.push("Falta o nome do fornecedor.");
 
   // Empresa: a que escreveu; senão a que tem o NIF do cliente lido no QR
-  let empresaId = await obterEmpresaId(String(form.get("empresa") ?? "").trim() || null);
   if (!empresaId && qr?.nifAdquirente) {
-    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE nif = ?", [qr.nifAdquirente]))?.id ?? null;
+    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE nif = ? AND apagada_em IS NULL", [qr.nifAdquirente]))?.id ?? null;
     if (!empresaId) notas.push(`O NIF do cliente ${qr.nifAdquirente} ainda não está associado a nenhuma empresa.`);
   }
 
   // Ligação por identificadores estáveis (nunca só pela morada: há moradas repetidas)
   let predioId: number | null = null, maquinaId: number | null = null;
   if (d?.identificador) {
-    const p = await queryOne<{ id: number }>("SELECT id FROM predios WHERE codigo_contador = ?", [d.identificador]);
+    const p = await queryOne<{ id: number }>("SELECT id FROM predios WHERE codigo_contador = ? AND apagada_em IS NULL", [d.identificador]);
     predioId = p?.id ?? null;
     if (!p && (d.categoria === "energia" || d.categoria === "agua")) notas.push(`Identificador ${d.identificador} não corresponde a nenhum prédio.`);
   }
   if (d?.numero_interno_maquina) {
-    const m = await queryOne<{ id: number }>("SELECT id FROM maquinas WHERE numero_interno = ?", [d.numero_interno_maquina]);
+    const m = await queryOne<{ id: number }>("SELECT id FROM maquinas WHERE numero_interno = ? AND apagada_em IS NULL", [d.numero_interno_maquina]);
     maquinaId = m?.id ?? null;
     if (!m) notas.push(`Máquina ${d.numero_interno_maquina} não existe.`);
   }
@@ -177,10 +182,13 @@ export async function guardarFatura(id: number, form: FormData) {
   const volta = (tipo: "ok" | "erro", msg: string): never => redirect(`/faturas/${id}?${tipo}=${encodeURIComponent(msg)}`);
   const nomeEmpresa = txt(form.get("empresa"));
   let empresaId: number | null = null;
-  if (direto) empresaId = await obterEmpresaId(nomeEmpresa);
-  else if (nomeEmpresa) {
+  if (direto) {
+    const r = await obterEmpresaId(nomeEmpresa);
+    if (r === "apagada") volta("erro", MSG_EMPRESA_APAGADA(nomeEmpresa!));
+    empresaId = r as number | null;
+  } else if (nomeEmpresa) {
     // Uma proposta não cria empresas: só usa as que já existem
-    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE LOWER(nome) = LOWER(?)", [nomeEmpresa]))?.id ?? null;
+    empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE LOWER(nome) = LOWER(?) AND apagada_em IS NULL", [nomeEmpresa]))?.id ?? null;
     if (!empresaId) volta("erro", `A empresa «${nomeEmpresa}» não existe. Peça a um administrador para a criar em Empresas.`);
   }
 
@@ -298,18 +306,99 @@ export async function reverterAlteracao(historicoId: number) {
   redirect(`/faturas/${h.fatura_id}`);
 }
 
-export async function criarPredio(form: FormData) {
+// ---------- Empresas, prédios e máquinas: criar, editar, apagar e restaurar (só admin) ----------
+type Entidade = "empresas" | "predios" | "maquinas";
+const ENTIDADES: Record<Entidade, { tipo: string; artigo: string; coluna: string }> = {
+  empresas: { tipo: "empresa", artigo: "a empresa", coluna: "nome" },
+  predios: { tipo: "predio", artigo: "o prédio", coluna: "nome" },
+  maquinas: { tipo: "maquina", artigo: "a máquina", coluna: "numero_interno" },
+};
+const AGORA = "to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')";
+
+async function adminOuSai() {
   const u = await requireUser();
-  if (u.cargo !== "admin") return;
-  await query("INSERT INTO predios (nome,morada,codigo_contador) VALUES (?,?,?)", [String(form.get("nome")), String(form.get("morada") ?? ""), txt(form.get("codigo"))]);
+  if (u.cargo !== "admin") redirect("/");
+  return u;
+}
+const irPara = (pagina: string, tipo: "ok" | "erro", msg: string): never => redirect(`${pagina}?${tipo}=${encodeURIComponent(msg)}`);
+
+export async function apagarEntidade(tabela: Entidade, id: number) {
+  const u = await adminOuSai();
+  const E = ENTIDADES[tabela];
+  if (!E) return;
+  const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NULL`, [id]);
+  if (!r) irPara(`/${tabela}`, "erro", "Já foi apagado ou não existe.");
+  await query(`UPDATE ${tabela} SET apagada_em = ${AGORA} WHERE id = ?`, [id]);
+  await registar(u, null, `${E.tipo}_apagada`, { nome: r!.nome });
+  revalidatePath("/", "layout");
+  irPara(`/${tabela}`, "ok", `Apagado: ${r!.nome}. Pode restaurar em Mais → Apagados.`);
+}
+
+export async function restaurarEntidade(tabela: Entidade, id: number) {
+  const u = await adminOuSai();
+  const E = ENTIDADES[tabela];
+  if (!E) return;
+  const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NOT NULL`, [id]);
+  if (!r) irPara("/apagados", "erro", "Não encontrado.");
+  await query(`UPDATE ${tabela} SET apagada_em = NULL WHERE id = ?`, [id]);
+  await registar(u, null, `${E.tipo}_restaurada`, { nome: r!.nome });
+  revalidatePath("/", "layout");
+  irPara("/apagados", "ok", `Restaurado: ${r!.nome}.`);
+}
+
+export async function criarPredio(form: FormData) {
+  const u = await adminOuSai();
+  const nome = String(form.get("nome") ?? "").trim();
+  if (!nome) irPara("/predios", "erro", "Escreva o nome do prédio.");
+  await query("INSERT INTO predios (nome,morada,codigo_contador) VALUES (?,?,?)", [nome, txt(form.get("morada")), txt(form.get("codigo"))]);
+  await registar(u, null, "predio_criada", { nome });
   revalidatePath("/predios");
+  irPara("/predios", "ok", `Prédio ${nome} criado.`);
+}
+
+export async function atualizarPredio(id: number, form: FormData) {
+  const u = await adminOuSai();
+  const nome = String(form.get("nome") ?? "").trim();
+  if (!nome) irPara(`/predios/${id}`, "erro", "O nome não pode ficar vazio.");
+  await query("UPDATE predios SET nome = ?, morada = ?, codigo_contador = ? WHERE id = ?", [nome, txt(form.get("morada")), txt(form.get("codigo")), id]);
+  await registar(u, null, "predio_editada", { nome });
+  revalidatePath("/", "layout");
+  irPara(`/predios/${id}`, "ok", "Prédio atualizado.");
 }
 
 export async function criarMaquina(form: FormData) {
-  const u = await requireUser();
-  if (u.cargo !== "admin") return;
-  await query("INSERT INTO maquinas (numero_interno,descricao) VALUES (?,?) ON CONFLICT (numero_interno) DO NOTHING", [String(form.get("numero")), String(form.get("descricao") ?? "")]);
+  const u = await adminOuSai();
+  const numero = String(form.get("numero") ?? "").trim();
+  if (!numero) irPara("/maquinas", "erro", "Escreva o nº interno da máquina.");
+  const r = await queryOne<{ id: number }>("INSERT INTO maquinas (numero_interno,descricao) VALUES (?,?) ON CONFLICT (numero_interno) DO NOTHING RETURNING id", [numero, txt(form.get("descricao"))]);
+  if (!r) irPara("/maquinas", "erro", `Já existe uma máquina com o nº ${numero} (pode estar apagada: veja Mais → Apagados).`);
+  await registar(u, null, "maquina_criada", { nome: numero });
   revalidatePath("/maquinas");
+  irPara("/maquinas", "ok", `Máquina ${numero} criada.`);
+}
+
+export async function atualizarMaquina(id: number, form: FormData) {
+  const u = await adminOuSai();
+  const numero = String(form.get("numero") ?? "").trim();
+  if (!numero) irPara(`/maquinas/${id}`, "erro", "O nº interno não pode ficar vazio.");
+  try {
+    await query("UPDATE maquinas SET numero_interno = ?, descricao = ? WHERE id = ?", [numero, txt(form.get("descricao")), id]);
+  } catch {
+    irPara(`/maquinas/${id}`, "erro", `Já existe outra máquina com o nº ${numero}.`);
+  }
+  await registar(u, null, "maquina_editada", { nome: numero });
+  revalidatePath("/", "layout");
+  irPara(`/maquinas/${id}`, "ok", "Máquina atualizada.");
+}
+
+/** Cria uma fatura sem ficheiro (para lançar à mão) e abre-a para preencher. */
+export async function criarFaturaManual() {
+  const u = await podeEditar();
+  if (!u) redirect("/");
+  const f = (await queryOne<{ id: number }>("INSERT INTO faturas (criado_por, categoria) VALUES (?, 'outros') RETURNING id", [u.id]))!;
+  await registar(u, f.id, "criada", { manual: true });
+  revalidatePath("/", "layout");
+  redirect(`/faturas/${f.id}?ok=${encodeURIComponent("Fatura criada. Preencha os dados e guarde.")}`);
 }
 
 // ---------- Gestão de utilizadores (só admin) ----------
@@ -333,6 +422,7 @@ export async function criarUtilizador(form: FormData) {
     "INSERT INTO users (nome,email,password_hash,cargo) VALUES (?,?,?,?) ON CONFLICT (email) DO NOTHING RETURNING id",
     [nome, email, hashPassword(senha), cargo]);
   if (!r) voltar("erro", "Já existe um utilizador com esse email.");
+  await registar(await soAdmin(), null, "utilizador_criada", { nome });
   revalidatePath("/utilizadores");
   voltar("ok", `Utilizador ${nome} criado.`);
 }
@@ -361,7 +451,8 @@ export async function alternarAtivo(id: number) {
   const novo = u.ativo ? 0 : 1;
   await query("UPDATE users SET ativo = ? WHERE id = ?", [novo, id]);
   if (!novo) await query("DELETE FROM sessions WHERE user_id = ?", [id]);
-  revalidatePath("/utilizadores");
+  await registar(await soAdmin(), null, novo ? "utilizador_restaurada" : "utilizador_apagada", { nome: u.nome });
+  revalidatePath("/", "layout");
   voltar("ok", `${u.nome} ${novo ? "reativado" : "desativado"}.`);
 }
 
@@ -393,8 +484,9 @@ export async function guardarEmpresa(id: number | null, form: FormData) {
     if (id) await query("UPDATE empresas SET nome = ?, nif = ?, morada = ?, codigo_postal = ?, localidade = ? WHERE id = ?", [nome, nif, morada, cp, localidade, id]);
     else await query("INSERT INTO empresas (nome, nif, morada, codigo_postal, localidade) VALUES (?, ?, ?, ?, ?)", [nome, nif, morada, cp, localidade]);
   } catch {
-    voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF.");
+    voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF (pode estar apagada: veja Mais → Apagados).");
   }
+  await registar(u, null, id ? "empresa_editada" : "empresa_criada", { nome });
   revalidatePath("/empresas");
   voltarEmpresas("ok", id ? "Empresa atualizada." : `Empresa ${nome} criada.`);
 }

@@ -82,6 +82,9 @@ const SCHEMA = `
   );
   -- Campos vindos do QR fiscal da AT, envio à contabilidade e "apagar" recuperável
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS nif TEXT;
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
+  ALTER TABLE predios ADD COLUMN IF NOT EXISTS apagada_em TEXT;
+  ALTER TABLE maquinas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS morada TEXT;
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS codigo_postal TEXT;
   ALTER TABLE empresas ADD COLUMN IF NOT EXISTS localidade TEXT;

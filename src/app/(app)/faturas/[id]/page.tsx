@@ -6,6 +6,7 @@ import { CATEGORIAS } from "@/lib/categorias";
 import { money } from "@/lib/format";
 import { aceitarProposta, apagarFatura, guardarFatura, rejeitarProposta } from "@/app/actions";
 import { editaDireto } from "@/lib/auth";
+import ConfirmarBotao from "@/components/ConfirmarBotao";
 import DiffLista from "@/components/Diff";
 import { listarHistorico } from "@/lib/historico";
 import HistoricoLista from "@/components/HistoricoLista";
@@ -26,6 +27,10 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
     listarPropostas({ faturaId: f.id, estado: ["pendente"] }),
   ]);
   const minha = propostas.find((p) => p.user_id === user.id);
+  // Se o prédio/máquina desta fatura foi apagado, continua a aparecer nas opções (senão gravar apagava a ligação sem querer)
+  const [prediosTodos, maquinasTodas] = await Promise.all([todosPredios(true), todasMaquinas(true)]);
+  const opcoesPredios = predios.some((p) => p.id === f.predio_id) ? predios : [...predios, ...prediosTodos.filter((p) => p.id === f.predio_id)];
+  const opcoesMaquinas = maquinas.some((m) => m.id === f.maquina_id) ? maquinas : [...maquinas, ...maquinasTodas.filter((m) => m.id === f.maquina_id)];
   const pdf = f.ficheiro_mime === "application/pdf";
 
   return (
@@ -93,14 +98,14 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
                 <label className="label">Prédio</label>
                 <select name="predio_id" defaultValue={f.predio_id ?? ""} className="field">
                   <option value="">—</option>
-                  {predios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                  {opcoesPredios.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.apagada_em ? " (apagado)" : ""}</option>)}
                 </select>
               </div>
               <div>
                 <label className="label">Máquina</label>
                 <select name="maquina_id" defaultValue={f.maquina_id ?? ""} className="field">
                   <option value="">—</option>
-                  {maquinas.map((m) => <option key={m.id} value={m.id}>{m.numero_interno} {m.descricao}</option>)}
+                  {opcoesMaquinas.map((m) => <option key={m.id} value={m.id}>{m.numero_interno} {m.descricao}{m.apagada_em ? " (apagada)" : ""}</option>)}
                 </select>
               </div>
               <Campo nome="identificador" rotulo="Nº contador / cliente" v={f.identificador} span />
@@ -147,7 +152,7 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
           )}
 
           {user.cargo === "admin" && (
-            <form action={apagarFatura.bind(null, f.id)}><button className="btn-danger">Apagar fatura</button><p className="mt-1 text-xs text-slate-500">Pode ser restaurada no Histórico.</p></form>
+            <form action={apagarFatura.bind(null, f.id)}><ConfirmarBotao className="btn-danger" mensagem="Apagar esta fatura? Pode restaurá-la em Apagados.">Apagar fatura</ConfirmarBotao><p className="mt-1 text-xs text-slate-500">Pode ser restaurada em Mais → Apagados.</p></form>
           )}
         </div>
       </div>
