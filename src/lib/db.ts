@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { hashPassword } from "./password";
 
 export const DATA_DIR = process.env.GESTAO_DATA_DIR ?? path.join(process.cwd(), "data");
@@ -58,14 +59,27 @@ function open(): DatabaseSync {
   return db;
 }
 
+/**
+ * Palavra-passe inicial de um utilizador. Usa a variável de ambiente se existir.
+ * Em produção sem variável, gera uma aleatória e escreve-a UMA vez no log.
+ * Só em desenvolvimento local (npm run dev) usa a palavra-passe simples de exemplo.
+ */
+function senhaInicial(env: string, exemplo: string, quem: string): string {
+  const v = process.env[env];
+  if (v) return v;
+  if (process.env.NODE_ENV !== "production") return exemplo;
+  const gerada = randomBytes(9).toString("base64url");
+  console.log(`[GESTAO APP] Palavra-passe inicial de ${quem}: ${gerada}  (defina ${env} para escolher a sua)`);
+  return gerada;
+}
+
 function seed(db: DatabaseSync) {
   const n = (db.prepare("SELECT COUNT(*) AS n FROM users").get() as { n: number }).n;
   if (n > 0) return;
   const ins = db.prepare("INSERT INTO users (nome,email,password_hash,cargo) VALUES (?,?,?,?)");
-  // Palavras-passe iniciais: mudar assim que possível.
-  ins.run("Sr. Filipe", "filipe@local", hashPassword("filipe123"), "admin");
-  ins.run("Lisa", "lisa@local", hashPassword("lisa123"), "operador");
-  ins.run("Contabilidade", "contabilidade@local", hashPassword("conta123"), "contabilidade");
+  ins.run("Sr. Filipe", "filipe@local", hashPassword(senhaInicial("FILIPE_PASSWORD", "filipe123", "filipe@local")), "admin");
+  ins.run("Lisa", "lisa@local", hashPassword(senhaInicial("LISA_PASSWORD", "lisa123", "lisa@local")), "operador");
+  ins.run("Contabilidade", "contabilidade@local", hashPassword(senhaInicial("CONTABILIDADE_PASSWORD", "conta123", "contabilidade@local")), "contabilidade");
 }
 
 export function db(): DatabaseSync {

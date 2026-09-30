@@ -10,6 +10,7 @@ import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/ex
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
+  if (ok === "bloqueado") return "Demasiadas tentativas. Tente novamente dentro de 15 minutos.";
   if (!ok) return "Email ou palavra-passe incorretos.";
   redirect("/");
 }

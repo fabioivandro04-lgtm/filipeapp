@@ -4,7 +4,7 @@ import "./globals.css";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 
-export const metadata: Metadata = { title: "GESTAO APP", description: "Gestão de faturas" };
+export const metadata: Metadata = { title: "GESTAO APP", description: "Gestão de faturas", robots: { index: false, follow: false } };
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#4f46e5" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
