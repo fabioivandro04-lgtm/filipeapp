@@ -14,6 +14,6 @@ fi
 
 [ -d node_modules ] || npm install || { read -r -p "npm install falhou. Enter para sair"; exit 1; }
 
-echo "A abrir http://localhost:3000 (deixe esta janela aberta; Ctrl+C para parar)"
-(sleep 4 && open "http://localhost:3000") &
-npm run dev
+echo "A abrir http://localhost:3210 (deixe esta janela aberta; Ctrl+C para parar)"
+(sleep 4 && open "http://localhost:3210") &
+npm run dev -- -p 3210
