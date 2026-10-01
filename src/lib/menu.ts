@@ -35,6 +35,9 @@ export function seccoes(u: User, c: { pendentes?: number; prazos?: number } = {}
       { href: "/apagados", nome: "Apagados", desc: "Restaurar faturas, empresas, prédios, máquinas e utilizadores", icon: "apagados" },
       { href: "/copias", nome: "Cópia de segurança", desc: "Descarregar todos os dados e faturas", icon: "copias" },
     ] }] : []),
+    { titulo: "Conta", itens: [
+      { href: "/definicoes", nome: "Definições", desc: admin ? "Perfil, palavra-passe, alertas por email e servidor de email" : "Perfil e palavra-passe", icon: "definicoes" },
+    ] },
   ];
 }
 

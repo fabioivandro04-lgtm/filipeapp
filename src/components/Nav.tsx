@@ -34,7 +34,7 @@ export default async function Nav({ user }: { user: User }) {
             <span className="grid h-8 w-8 place-items-center rounded-lg bg-brand-600 text-white">G</span>
           </Link>
           <div className="ml-auto flex items-center gap-3">
-            <Link href="/conta" className="text-right leading-tight">
+            <Link href="/definicoes" className="text-right leading-tight">
               <p className="text-sm font-medium">{user.nome}</p>
               <p className="text-xs text-slate-500">{user.cargo}</p>
             </Link>

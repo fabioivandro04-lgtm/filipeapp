@@ -8,7 +8,8 @@ import { hashPassword, verifyPassword } from "@/lib/password";
 import { avaliar } from "@/lib/alertas";
 import { lerQrFiscal } from "@/lib/qr";
 import { carregarFicheiro, faturasDoPacote, lerFiltro, marcarComoEnviadas, paraQuery } from "@/lib/contabilidade";
-import { emailConfigurado, enviarEmail, type Anexo } from "@/lib/email";
+import { emailConfigurado, enviarEmail, listaEmails, type Anexo } from "@/lib/email";
+import { enviarAlertas, FREQUENCIAS, guardarDefinicoesAlertas, lerDefinicoesAlertas, TIPOS_ALERTA, type Frequencia, type TipoAlerta } from "@/lib/alertas-email";
 import { excelFaturas, nomeFicheiro } from "@/lib/excel";
 import { guardarConfig } from "@/lib/config";
 import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
@@ -674,7 +675,7 @@ export async function enviarContabilidade(form: FormData) {
   const filtro = lerFiltro({ mes: form.get("mes"), empresa: form.get("empresa"), estado: form.get("estado") });
   const voltar = (tipo: "ok" | "erro", msg: string): never => redirect(`/contabilidade?${paraQuery(filtro)}&${tipo}=${encodeURIComponent(msg)}`);
 
-  if (!emailConfigurado()) voltar("erro", "O envio por email ainda não está configurado. Use «Descarregar ZIP» ou veja as instruções na página.");
+  if (!(await emailConfigurado())) voltar("erro", "O envio por email ainda não está configurado. Use «Descarregar ZIP» ou veja as instruções na página.");
   const para = String(form.get("para") ?? "").split(/[,;\s]+/).filter(Boolean);
   if (!para.length || !para.every((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))) voltar("erro", "Escreva um email de destino válido.");
   const faturas = await faturasDoPacote(user, filtro);
@@ -827,4 +828,80 @@ export async function apagarAluguer(maquinaId: number, id: number) {
   await registar(u, null, "aluguer_apagada", { nome: `${a!.numero} — ${a!.cliente ?? "sem cliente"}`, maquina_id: maquinaId });
   revalidatePath("/", "layout");
   irPara(`/maquinas/${maquinaId}`, "ok", "Aluguer apagado.");
+}
+
+// ---------- Definições ----------
+const voltarDefinicoes = (tipo: "ok" | "erro", msg: string, seccao = ""): never =>
+  redirect(`/definicoes?${tipo}=${encodeURIComponent(msg)}${seccao ? `#${seccao}` : ""}`);
+
+/** Cada pessoa muda o próprio nome (o email é o login e só o admin o muda, recriando o utilizador). */
+export async function guardarPerfil(form: FormData) {
+  const u = await requireUser();
+  const nome = String(form.get("nome") ?? "").trim().slice(0, 80);
+  if (!nome) voltarDefinicoes("erro", "O nome não pode ficar vazio.", "perfil");
+  await query("UPDATE users SET nome = ? WHERE id = ?", [nome, u.id]);
+  if (nome !== u.nome) await registar(u, null, "perfil_alterado", { nome: `${u.nome} → ${nome}` });
+  revalidatePath("/", "layout");
+  voltarDefinicoes("ok", "Perfil guardado.", "perfil");
+}
+
+export async function guardarAlertasEmail(form: FormData) {
+  const u = await adminOuSai();
+  const texto = String(form.get("emails") ?? "");
+  const emails = listaEmails(texto);
+  const invalidos = texto.split(/[,;\s]+/).filter((e) => e.trim() && !emails.includes(e.trim().toLowerCase()));
+  if (invalidos.length) voltarDefinicoes("erro", `Email inválido: ${invalidos.join(", ")}`, "alertas");
+  const tipos = form.getAll("tipos").map(String).filter((t): t is TipoAlerta => t in TIPOS_ALERTA);
+  const f = String(form.get("frequencia") ?? "diario");
+  const frequencia = (f in FREQUENCIAS ? f : "diario") as Frequencia;
+  await guardarDefinicoesAlertas({ emails, tipos, frequencia });
+  await registar(u, null, "definicoes_alertas", { resumo: `${emails.join(", ") || "ninguém"} · ${FREQUENCIAS[frequencia]}` });
+  voltarDefinicoes("ok", emails.length ? "Alertas por email guardados." : "Guardado. Sem destinatários, não são enviados alertas.", "alertas");
+}
+
+export async function enviarAlertasAgora() {
+  const u = await adminOuSai();
+  let r: { enviado: boolean; motivo: string };
+  try { r = await enviarAlertas({ automatico: false }); } catch (e) { r = { enviado: false, motivo: `Falha ao enviar: ${(e as Error).message}` }; }
+  if (r.enviado) await registar(u, null, "alertas_enviados", { resumo: r.motivo });
+  voltarDefinicoes(r.enviado ? "ok" : "erro", r.motivo, "alertas");
+}
+
+export async function guardarServidorEmail(form: FormData) {
+  const u = await adminOuSai();
+  const host = txt(form.get("host")), from = txt(form.get("from"));
+  const porta = inteiro(form.get("porta")) ?? 587;
+  if (!host || !from) voltarDefinicoes("erro", "Preencha o servidor e o remetente.", "email");
+  if (!listaEmails(from!.replace(/.*<|>.*/g, "")).length) voltarDefinicoes("erro", "O remetente tem de ser um email (ex.: faturas@empresa.pt).", "email");
+  await guardarConfig("smtp_host", host!);
+  await guardarConfig("smtp_port", String(porta));
+  await guardarConfig("smtp_user", txt(form.get("user")) ?? "");
+  await guardarConfig("smtp_from", from!);
+  // A palavra-passe só muda se escrever uma nova (o campo vem sempre vazio, por segurança)
+  const pass = String(form.get("pass") ?? "");
+  if (pass) await guardarConfig("smtp_pass", pass);
+  await registar(u, null, "definicoes_email", { resumo: `${host}:${porta} · ${from}` });
+  voltarDefinicoes("ok", "Servidor de email guardado. Use «Enviar email de teste» para confirmar.", "email");
+}
+
+export async function testarEmail() {
+  const u = await adminOuSai();
+  const para = u.email.includes("@") && !u.email.endsWith("@local") ? [u.email] : (await lerDefinicoesAlertas()).emails;
+  if (!para.length) voltarDefinicoes("erro", "Não há para onde enviar: o seu login não é um email real e não há destinatários de alertas.", "email");
+  try {
+    await enviarEmail({ para, assunto: "GESTAO APP: email de teste", texto: "Se recebeu este email, o envio da GESTAO APP está a funcionar." });
+  } catch (e) {
+    voltarDefinicoes("erro", `O envio falhou: ${(e as Error).message}`, "email");
+  }
+  voltarDefinicoes("ok", `Email de teste enviado para ${para.join(", ")}.`, "email");
+}
+
+export async function guardarEmailContabilidade(form: FormData) {
+  const u = await adminOuSai();
+  const texto = String(form.get("emails") ?? "");
+  const emails = listaEmails(texto);
+  if (texto.trim() && !emails.length) voltarDefinicoes("erro", "Email da contabilidade inválido.", "contabilidade");
+  await guardarConfig("email_contabilidade", emails.join(", "));
+  await registar(u, null, "definicoes_contabilidade", { resumo: emails.join(", ") || "(vazio)" });
+  voltarDefinicoes("ok", "Email da contabilidade guardado.", "contabilidade");
 }

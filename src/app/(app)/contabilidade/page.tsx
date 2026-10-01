@@ -19,7 +19,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
   const semFicheiro = faturas.filter((f) => !f.ficheiro_id).length;
   const empresa = empresas.find((e) => e.id === filtro.empresaId);
   const podeEnviar = editaDireto(user); // contabilista só descarrega
-  const podeEmail = emailConfigurado();
+  const podeEmail = await emailConfigurado();
   const mensagem = `Bom dia,\n\nSeguem em anexo as faturas de ${mesExtenso(filtro.mes)}${empresa ? ` da empresa ${empresa.nome}` : ""}: ${faturas.length} documentos, no total de ${money(total)}.\n\nO ficheiro Excel resume os dados e os originais (PDF/foto) mantêm o QR code fiscal.\n\nCumprimentos,\n${user.nome}`;
   const oculto = (
     <>
@@ -94,8 +94,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
             <button disabled={!podeEmail} className="btn-primary w-full">Enviar por email</button>
             {!podeEmail && (
               <p className="text-xs text-slate-500">
-                Ainda não configurado. Na Vercel, crie as variáveis <code>SMTP_HOST</code>, <code>SMTP_PORT</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code> e <code>SMTP_FROM</code>.
-                Com Gmail: <code>smtp.gmail.com</code>, porta <code>465</code> e uma «palavra-passe de aplicação».
+                Ainda não configurado. Um administrador configura o servidor de email em <Link href="/definicoes#email" className="underline">Definições → Servidor de email</Link>.
               </p>
             )}
           </form>}

@@ -14,7 +14,6 @@ export default async function Mais() {
   // As páginas que já estão na barra de baixo não se repetem aqui
   const grupos = [
     ...seccoes(user, { pendentes, prazos }).map((s) => ({ ...s, itens: s.itens.filter((i) => !BARRA_TELEMOVEL.includes(i.href)) })),
-    { titulo: "Conta", itens: [{ href: "/conta", nome: "Alterar palavra-passe", desc: "A sua conta", icon: "conta" }] },
   ].filter((s) => s.itens.length);
   return (
     <>

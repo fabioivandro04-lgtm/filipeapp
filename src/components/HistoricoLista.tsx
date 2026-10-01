@@ -26,7 +26,8 @@ const ACAO: Record<string, string> = {
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
   revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
   sessao_entrou: "entrou na app", sessao_saiu: "saiu da app", utilizador_cargo: "mudou o cargo de", utilizador_senha: "redefiniu a palavra-passe de",
-  utilizador_senha_propria: "alterou a própria palavra-passe", documento_renovada: "renovou o prazo de",
+  utilizador_senha_propria: "alterou a própria palavra-passe", perfil_alterado: "mudou o nome:", definicoes_alertas: "alterou os alertas por email:",
+  definicoes_email: "alterou o servidor de email:", definicoes_contabilidade: "alterou o email da contabilidade:", alertas_enviados: "enviou os alertas por email:", documento_renovada: "renovou o prazo de",
 };
 
 export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarFatura }: { registos: Registo[]; nomes: Nomes; podeDesfazer: boolean; mostrarFatura: boolean }) {
@@ -46,7 +47,7 @@ export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarF
                   ? <Link href={`/maquinas/${det.maquina_id}`} className="font-medium text-brand-600 hover:underline">{det.nome}</Link>
                   : <span className="font-medium">{det.nome}</span>}</>}
                 {r.acao === "utilizador_cargo" && det?.cargo && <> para <span className="font-medium">{det.cargo}</span></>}
-                {r.acao === "maquinas_importadas" && det?.resumo && <> <span className="font-medium">{det.resumo}</span></>}
+                {det?.resumo && !r.fatura_id && <> <span className="font-medium">{det.resumo}</span></>}
                 {mostrarFatura && r.fatura_id && (
                   <> — {r.fatura_apagada === null
                     ? <Link href={`/faturas/${r.fatura_id}`} className="text-brand-600 hover:underline">{r.fatura_fornecedor ?? `fatura #${r.fatura_id}`} {r.fatura_numero}</Link>

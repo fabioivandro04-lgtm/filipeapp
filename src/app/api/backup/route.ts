@@ -16,7 +16,8 @@ export async function GET() {
   return respostaZip(`copia-gestao-app-${hoje}.zip`, async (adicionar) => {
     // Dados de todas as tabelas (sem palavras-passe nem sessões), incluindo faturas apagadas
     const dados: Record<string, unknown[]> = {};
-    for (const t of TABELAS) dados[t] = await query(`SELECT * FROM ${t} ORDER BY 1`);
+    // A palavra-passe do servidor de email nunca sai na cópia
+    for (const t of TABELAS) dados[t] = await query(`SELECT * FROM ${t} ${t === "config" ? "WHERE chave <> 'smtp_pass'" : ""} ORDER BY 1`);
     dados.users = await query("SELECT id, nome, email, cargo, ativo FROM users ORDER BY id");
     adicionar("dados.json", enc.encode(JSON.stringify({ criadaEm: new Date().toISOString(), ...dados }, null, 1)));
     adicionar("faturas.xlsx", new Uint8Array(await excelFaturas(await listarFaturas(u, { limite: 5000 }))));

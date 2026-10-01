@@ -43,9 +43,9 @@ export default function MenuLateral({ seccoes, nome, cargo, carrega }: { seccoes
         ))}
       </nav>
       <div className="flex shrink-0 items-center gap-3 border-t border-slate-200 p-4">
-        <Link href="/conta" title="Alterar palavra-passe" className="min-w-0 flex-1 hover:opacity-70">
+        <Link href="/definicoes" title="Definições" className="min-w-0 flex-1 hover:opacity-70">
           <p className="truncate text-sm font-medium">{nome}</p>
-          <p className="truncate text-xs text-slate-500">{CARGO[cargo] ?? cargo} · a minha conta</p>
+          <p className="truncate text-xs text-slate-500">{CARGO[cargo] ?? cargo}</p>
         </Link>
         <form action={sair}><button className="btn-ghost px-3 py-1.5 text-xs">Sair</button></form>
       </div>

@@ -44,6 +44,7 @@ export const GRUPOS_HISTORICO: Record<string, { nome: string; sql: string }> = {
   entidades: { nome: "Empresas e prédios", sql: "(h.acao LIKE 'empresa%' OR h.acao LIKE 'predio%')" },
   utilizadores: { nome: "Utilizadores", sql: "h.acao LIKE 'utilizador%'" },
   sessoes: { nome: "Entradas e saídas", sql: "h.acao LIKE 'sessao%'" },
+  definicoes: { nome: "Definições e alertas", sql: "(h.acao LIKE 'definicoes%' OR h.acao LIKE 'alertas%' OR h.acao LIKE 'perfil%')" },
 };
 
 export type FiltroHistorico = { faturaId?: number; userId?: number; grupo?: string; desde?: string; ate?: string; texto?: string; limite?: number; offset?: number };
