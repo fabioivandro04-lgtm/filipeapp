@@ -31,7 +31,7 @@ export default async function Empresas({ searchParams }: { searchParams: Promise
           <li key={e.id} className="card p-4">
             <form action={guardarEmpresa.bind(null, e.id)} className="space-y-3">
               <Campos e={e} />
-              {e.nif && !nifValido(e.nif) && <p className="text-sm text-amber-800">⚠ O NIF {e.nif} não é válido (dígito de controlo). Confirme o número: com um NIF errado, as faturas não se associam sozinhas.</p>}
+              {e.nif && !nifValido(e.nif) && <p className="text-sm text-amber-800">O NIF {e.nif} não é válido (dígito de controlo). Confirme o número: com um NIF errado, as faturas não se associam sozinhas.</p>}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <button className="btn-ghost">Guardar</button>
                 <span className="text-xs text-slate-500">{e.faturas} fatura(s)</span>

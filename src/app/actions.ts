@@ -16,6 +16,7 @@ import { nifValido } from "@/lib/nif";
 import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
+import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -38,6 +39,7 @@ export async function alterarSenha(_: ResultadoConta | null, form: FormData): Pr
   // Termina as outras sessões deste utilizador (fica só a atual)
   const token = (await cookies()).get("session")?.value ?? "";
   await query("DELETE FROM sessions WHERE user_id = ? AND token <> ?", [u.id, token]);
+  await registar(u, null, "utilizador_senha_propria", { nome: u.nome });
   return { ok: true };
 }
 
@@ -338,7 +340,7 @@ export async function apagarEntidade(tabela: Entidade, id: number) {
   const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NULL`, [id]);
   if (!r) irPara(`/${tabela}`, "erro", "Já foi apagado ou não existe.");
   await query(`UPDATE ${tabela} SET apagada_em = ${AGORA} WHERE id = ?`, [id]);
-  await registar(u, null, `${E.tipo}_apagada`, { nome: r!.nome });
+  await registar(u, null, `${E.tipo}_apagada`, { nome: r!.nome, [`${E.tipo}_id`]: id });
   revalidatePath("/", "layout");
   irPara(`/${tabela}`, "ok", `Apagado: ${r!.nome}. Pode restaurar em Mais → Apagados.`);
 }
@@ -350,7 +352,7 @@ export async function restaurarEntidade(tabela: Entidade, id: number) {
   const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NOT NULL`, [id]);
   if (!r) irPara("/apagados", "erro", "Não encontrado.");
   await query(`UPDATE ${tabela} SET apagada_em = NULL WHERE id = ?`, [id]);
-  await registar(u, null, `${E.tipo}_restaurada`, { nome: r!.nome });
+  await registar(u, null, `${E.tipo}_restaurada`, { nome: r!.nome, [`${E.tipo}_id`]: id });
   revalidatePath("/", "layout");
   irPara("/apagados", "ok", `Restaurado: ${r!.nome}.`);
 }
@@ -370,10 +372,16 @@ export async function atualizarPredio(id: number, form: FormData) {
   const nome = String(form.get("nome") ?? "").trim();
   if (!nome) irPara(`/predios/${id}`, "erro", "O nome não pode ficar vazio.");
   await query("UPDATE predios SET nome = ?, morada = ?, codigo_contador = ? WHERE id = ?", [nome, txt(form.get("morada")), txt(form.get("codigo")), id]);
-  await registar(u, null, "predio_editada", { nome });
+  await registar(u, null, "predio_editada", { nome, predio_id: id });
   revalidatePath("/", "layout");
   irPara(`/predios/${id}`, "ok", "Prédio atualizado.");
 }
+
+/** Campos da ficha da máquina comparados para o histórico (o que mudou em cada edição). */
+const CAMPOS_MAQUINA_EDITAVEIS = [
+  "numero_interno", "empresa_id", "designacao", "marca", "modelo", "ano", "id_fornecedor", "numero_serie", "peso_kg", "matricula", "horas",
+  "data_compra", "data_chegada", "fornecedor", "agencia", "valor_compra", "facturada", "observacoes", "estado", "venda_fatura", "comprador", "data_venda",
+] as const;
 
 const inteiro = (v: FormDataEntryValue | null) => { const n = num(v); return n == null ? null : Math.round(n); };
 const estadoValido = (v: FormDataEntryValue | null): Estado => ((ESTADOS as string[]).includes(String(v)) ? (String(v) as Estado) : "stock");
@@ -390,7 +398,7 @@ export async function criarMaquina(form: FormData) {
       [numero, descricaoDe(d) || null, num(form.get("empresa")), d.designacao, d.marca, d.modelo]);
   } catch { r = undefined; }
   if (!r) irPara("/maquinas", "erro", `Já existe uma máquina com o nº ${numero} (pode estar apagada: veja Mais → Apagados).`);
-  await registar(u, null, "maquina_criada", { nome: numero });
+  await registar(u, null, "maquina_criada", { nome: numero, maquina_id: r!.id });
   revalidatePath("/maquinas");
   irPara(`/maquinas/${r!.id}`, "ok", `Máquina ${numero} criada. Complete os dados abaixo.`);
 }
@@ -402,6 +410,7 @@ export async function atualizarMaquina(id: number, form: FormData) {
   const numero = String(form.get("numero") ?? "").trim();
   if (!numero) irPara(`/maquinas/${id}`, "erro", "O nº interno não pode ficar vazio.");
   const d = { designacao: txt(form.get("designacao")), marca: txt(form.get("marca")), modelo: txt(form.get("modelo")) };
+  const antes = await queryOne<Record<string, unknown>>(`SELECT ${CAMPOS_MAQUINA_EDITAVEIS.join(",")} FROM maquinas WHERE id = ?`, [id]);
   try {
     await query(
       `UPDATE maquinas SET numero_interno=?, descricao=?, empresa_id=?, designacao=?, marca=?, modelo=?, ano=?, id_fornecedor=?, numero_serie=?, peso_kg=?,
@@ -414,7 +423,13 @@ export async function atualizarMaquina(id: number, form: FormData) {
   } catch {
     irPara(`/maquinas/${id}`, "erro", `Já existe outra máquina com o nº ${numero}.`);
   }
-  await registar(u, null, "maquina_editada", { nome: numero });
+  const depois = await queryOne<Record<string, unknown>>(`SELECT ${CAMPOS_MAQUINA_EDITAVEIS.join(",")} FROM maquinas WHERE id = ?`, [id]);
+  const mudou: Diferencas = {};
+  for (const c of CAMPOS_MAQUINA_EDITAVEIS) {
+    const a = antes?.[c] ?? null, b = depois?.[c] ?? null;
+    if (String(a ?? "") !== String(b ?? "")) mudou[c] = [a, b];
+  }
+  if (Object.keys(mudou).length) await registar(u, null, "maquina_editada", { nome: numero, maquina_id: id, mudou });
   revalidatePath("/", "layout");
   irPara(`/maquinas/${id}`, "ok", "Máquina atualizada.");
 }
@@ -569,6 +584,7 @@ export async function atualizarCargo(id: number, form: FormData) {
   if (!(CARGOS as readonly string[]).includes(cargo)) voltar("erro", "Cargo inválido.");
   await query("UPDATE users SET cargo = ? WHERE id = ?", [cargo, id]);
   await query("DELETE FROM sessions WHERE user_id = ?", [id]); // obriga a entrar de novo com o cargo novo
+  await registar(await soAdmin(), null, "utilizador_cargo", { nome: u.nome, cargo });
   revalidatePath("/utilizadores");
   voltar("ok", `Cargo de ${u.nome} atualizado.`);
 }
@@ -589,6 +605,7 @@ export async function redefinirSenha(id: number, form: FormData) {
   if (senha.length < 10) voltar("erro", "A palavra-passe deve ter pelo menos 10 caracteres.");
   await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(senha), id]);
   await query("DELETE FROM sessions WHERE user_id = ?", [id]);
+  await registar(await soAdmin(), null, "utilizador_senha", { nome: u.nome });
   voltar("ok", `Palavra-passe de ${u.nome} redefinida. Diga-lhe a nova palavra-passe.`);
 }
 
@@ -670,4 +687,114 @@ export async function marcarEnviadas(form: FormData) {
   for (const f of faturas) await registar(user, f.id, "enviada", { via: "manual" });
   revalidatePath("/", "layout");
   redirect(`/contabilidade?${paraQuery(filtro)}&ok=${encodeURIComponent(`${faturas.length} faturas marcadas como enviadas.`)}`);
+}
+
+// ---------- Documentos com prazo (seguro, inspeção, IUC…) ----------
+/** Só aceita caminhos internos (evita redirecionar para outro site). */
+const destino = (v: FormDataEntryValue | null, padrao: string) => { const s = String(v ?? ""); return s.startsWith("/") && !s.startsWith("//") ? s : padrao; };
+const dataValida = (v: FormDataEntryValue | null) => { const s = String(v ?? "").trim(); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
+
+async function guardarAnexo(v: FormDataEntryValue | null): Promise<number | null | "erro"> {
+  if (!(v instanceof File) || v.size === 0) return null;
+  if (!MIMES.has(v.type) || v.size > MAX_BYTES) return "erro";
+  return (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [v.type, Buffer.from(await v.arrayBuffer())]))!.id;
+}
+
+export async function guardarDocumento(id: number | null, form: FormData) {
+  const u = await podeEditar();
+  if (!u) redirect("/");
+  const voltarA = destino(form.get("voltar"), "/prazos");
+  const tipo = String(form.get("tipo") ?? "");
+  const validade = dataValida(form.get("validade"));
+  if (!(TIPOS_DOCUMENTO as readonly string[]).includes(tipo)) irPara(voltarA, "erro", "Escolha o tipo de documento.");
+  if (!validade) irPara(voltarA, "erro", "Indique a data de validade.");
+  // A máquina pode vir pelo id (ficha da máquina) ou pelo nº interno escrito (página Prazos)
+  let maquinaId = num(form.get("maquina_id"));
+  const numero = txt(form.get("maquina"));
+  if (!maquinaId && numero) {
+    const m = await maquinaPorNumero(numero);
+    if (!m) irPara(voltarA, "erro", `Não encontrei a máquina ${numero}.`);
+    maquinaId = m!.id;
+  }
+  const empresaId = num(form.get("empresa"));
+  if (!maquinaId && !empresaId) irPara(voltarA, "erro", "Indique a máquina ou a empresa a que o documento pertence.");
+  const anexo = await guardarAnexo(form.get("ficheiro"));
+  if (anexo === "erro") irPara(voltarA, "erro", "O ficheiro tem de ser PDF ou foto, até 4 MB.");
+  const dados = [maquinaId, empresaId, tipo, txt(form.get("descricao")), validade, txt(form.get("notas"))];
+  let docId = id;
+  if (id) {
+    await query(`UPDATE documentos SET maquina_id=?, empresa_id=?, tipo=?, descricao=?, validade=?, notas=?${anexo ? ", ficheiro_id=?" : ""} WHERE id=? AND apagado_em IS NULL`,
+      [...dados, ...(anexo ? [anexo] : []), id]);
+  } else {
+    docId = (await queryOne<{ id: number }>("INSERT INTO documentos (maquina_id, empresa_id, tipo, descricao, validade, notas, ficheiro_id, criado_por) VALUES (?,?,?,?,?,?,?,?) RETURNING id",
+      [...dados, anexo, u!.id]))!.id;
+  }
+  const numeroMaquina = numero ?? (maquinaId ? (await queryOne<{ n: string }>("SELECT numero_interno AS n FROM maquinas WHERE id = ?", [maquinaId]))?.n : null);
+  const descricao = txt(form.get("descricao"));
+  const nome = `${ROTULO_DOCUMENTO[tipo as TipoDocumento]}${numeroMaquina ? ` de ${numeroMaquina}` : ""}${descricao ? ` (${descricao})` : ""}`;
+  await registar(u, null, id ? "documento_editada" : "documento_criada", { nome, validade, documento_id: docId, maquina_id: maquinaId });
+  revalidatePath("/", "layout");
+  irPara(voltarA, "ok", id ? "Documento atualizado." : "Documento guardado.");
+}
+
+/** Renovar = nova data de validade (e, opcionalmente, o novo comprovativo). */
+export async function renovarDocumento(id: number, form: FormData) {
+  const u = await podeEditar();
+  if (!u) redirect("/");
+  const voltarA = destino(form.get("voltar"), "/prazos");
+  const validade = dataValida(form.get("validade"));
+  if (!validade) irPara(voltarA, "erro", "Indique a nova data de validade.");
+  const anexo = await guardarAnexo(form.get("ficheiro"));
+  if (anexo === "erro") irPara(voltarA, "erro", "O ficheiro tem de ser PDF ou foto, até 4 MB.");
+  const d = await queryOne<{ tipo: TipoDocumento; validade: string; maquina_id: number | null; numero: string | null }>(
+    "SELECT d.tipo, d.validade, d.maquina_id, m.numero_interno AS numero FROM documentos d LEFT JOIN maquinas m ON m.id = d.maquina_id WHERE d.id = ? AND d.apagado_em IS NULL", [id]);
+  if (!d) irPara(voltarA, "erro", "Documento não encontrado.");
+  await query(`UPDATE documentos SET validade = ?${anexo ? ", ficheiro_id = ?" : ""} WHERE id = ?`, [validade, ...(anexo ? [anexo] : []), id]);
+  await registar(u, null, "documento_renovada", { nome: `${ROTULO_DOCUMENTO[d!.tipo] ?? d!.tipo}${d!.numero ? ` de ${d!.numero}` : ""}`, antes: d!.validade, validade, documento_id: id, maquina_id: d!.maquina_id });
+  revalidatePath("/", "layout");
+  irPara(voltarA, "ok", "Prazo renovado.");
+}
+
+export async function apagarDocumento(id: number, form: FormData) {
+  const u = await adminOuSai();
+  const voltarA = destino(form.get("voltar"), "/prazos");
+  const d = await queryOne<{ tipo: TipoDocumento; maquina_id: number | null; numero: string | null }>(
+    "SELECT d.tipo, d.maquina_id, m.numero_interno AS numero FROM documentos d LEFT JOIN maquinas m ON m.id = d.maquina_id WHERE d.id = ? AND d.apagado_em IS NULL", [id]);
+  if (!d) irPara(voltarA, "erro", "Já foi apagado.");
+  await query(`UPDATE documentos SET apagado_em = ${AGORA} WHERE id = ?`, [id]);
+  await registar(u, null, "documento_apagada", { nome: `${ROTULO_DOCUMENTO[d!.tipo] ?? d!.tipo}${d!.numero ? ` de ${d!.numero}` : ""}`, documento_id: id, maquina_id: d!.maquina_id });
+  revalidatePath("/", "layout");
+  irPara(voltarA, "ok", "Documento apagado.");
+}
+
+// ---------- Alugueres (receitas por máquina) ----------
+export async function guardarAluguer(maquinaId: number, id: number | null, form: FormData) {
+  const u = await podeEditar();
+  if (!u) redirect("/");
+  const voltarA = `/maquinas/${maquinaId}`;
+  const inicio = dataValida(form.get("inicio"));
+  const fim = dataValida(form.get("fim"));
+  const valor = num(form.get("valor"));
+  if (!inicio) irPara(voltarA, "erro", "Indique a data de início do aluguer.");
+  if (fim && fim < inicio!) irPara(voltarA, "erro", "A data de fim é anterior à de início.");
+  if (valor == null || valor < 0) irPara(voltarA, "erro", "Indique o valor do aluguer (0 se ainda não foi faturado).");
+  const m = await queryOne<{ numero_interno: string }>("SELECT numero_interno FROM maquinas WHERE id = ?", [maquinaId]);
+  if (!m) irPara("/maquinas", "erro", "Máquina não encontrada.");
+  const dados = [txt(form.get("cliente")), inicio, fim, valor, txt(form.get("fatura")), txt(form.get("notas"))];
+  if (id) await query("UPDATE alugueres SET cliente=?, inicio=?, fim=?, valor=?, fatura=?, notas=? WHERE id=? AND maquina_id=? AND apagado_em IS NULL", [...dados, id, maquinaId]);
+  else await query("INSERT INTO alugueres (maquina_id, cliente, inicio, fim, valor, fatura, notas, criado_por) VALUES (?,?,?,?,?,?,?,?)", [maquinaId, ...dados, u!.id]);
+  await registar(u, null, id ? "aluguer_editada" : "aluguer_criada", { nome: `${m!.numero_interno} — ${dados[0] ?? "sem cliente"}`, valor, maquina_id: maquinaId });
+  revalidatePath("/", "layout");
+  irPara(voltarA, "ok", id ? "Aluguer atualizado." : "Aluguer registado.");
+}
+
+export async function apagarAluguer(maquinaId: number, id: number) {
+  const u = await adminOuSai();
+  const a = await queryOne<{ cliente: string | null; numero: string }>(
+    "SELECT a.cliente, m.numero_interno AS numero FROM alugueres a JOIN maquinas m ON m.id = a.maquina_id WHERE a.id = ? AND a.apagado_em IS NULL", [id]);
+  if (!a) irPara(`/maquinas/${maquinaId}`, "erro", "Já foi apagado.");
+  await query(`UPDATE alugueres SET apagado_em = ${AGORA} WHERE id = ?`, [id]);
+  await registar(u, null, "aluguer_apagada", { nome: `${a!.numero} — ${a!.cliente ?? "sem cliente"}`, maquina_id: maquinaId });
+  revalidatePath("/", "layout");
+  irPara(`/maquinas/${maquinaId}`, "ok", "Aluguer apagado.");
 }

@@ -19,3 +19,25 @@ export const mesExtenso = (m: string) => `${MESES_EXTENSO[Number(m.slice(5, 7)) 
 export const COR_ESTADO: Record<string, string> = {
   stock: "bg-emerald-100 text-emerald-800", vendido: "bg-slate-200 text-slate-700", abatido: "bg-red-100 text-red-800", outro: "bg-amber-100 text-amber-800",
 };
+
+// Datas/horas guardadas em UTC («AAAA-MM-DD HH:MM:SS»), mostradas na hora de Lisboa
+const horaLisboa = new Intl.DateTimeFormat("pt-PT", { timeZone: "Europe/Lisbon", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+const utc = (s: string) => new Date(s.replace(" ", "T").replace(/Z?$/, "Z"));
+export const dataHoraPt = (s: string | null | undefined) => (s ? horaLisboa.format(utc(s)).replace(",", "") : "—");
+
+/** Há quanto tempo: «agora mesmo», «há 5 min», «há 3 h», «ontem», ou a data. */
+export function haQuanto(s: string | null | undefined, agora = Date.now()): string {
+  if (!s) return "nunca";
+  const min = Math.floor((agora - utc(s).getTime()) / 60000);
+  if (min < 2) return "agora mesmo";
+  if (min < 60) return `há ${min} min`;
+  if (min < 24 * 60) return `há ${Math.floor(min / 60)} h`;
+  if (min < 48 * 60) return "ontem";
+  return dataHoraPt(s);
+}
+
+/** Hora atual em ms (fora dos componentes, para as regras do React). */
+export const agoraMs = () => Date.now();
+
+/** Online = usou a app nos últimos 5 minutos. */
+export const estaOnline = (vistoEm: string | null | undefined, agora = Date.now()) => !!vistoEm && agora - utc(vistoEm).getTime() < 5 * 60000;

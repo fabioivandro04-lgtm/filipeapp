@@ -3,6 +3,8 @@ import { editaDireto, type User } from "@/lib/auth";
 import { contarPropostasPendentes } from "@/lib/queries";
 import { extras, PRINCIPAL } from "@/lib/menu";
 import { sair } from "@/app/actions";
+import Icone from "./Icone";
+import MenuMais from "./MenuMais";
 
 export default async function Nav({ user }: { user: User }) {
   const pendentes = user.cargo === "admin" ? await contarPropostasPendentes() : 0;
@@ -20,14 +22,7 @@ export default async function Nav({ user }: { user: User }) {
             {PRINCIPAL.map((l) => (
               <Link key={l.href} href={l.href} className="rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900">{l.nome}</Link>
             ))}
-            <details className="group relative">
-              <summary className="cursor-pointer list-none rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 hover:text-slate-900">Mais ▾{pendentes > 0 && <span className="ml-1 rounded-full bg-amber-500 px-1.5 text-xs font-medium text-white">{pendentes}</span>}</summary>
-              <div className="absolute left-0 top-full z-30 mt-1 w-64 rounded-xl border border-slate-200 bg-white p-1 shadow-lg">
-                {mais.map((l) => (
-                  <Link key={l.href} href={l.href} className="block rounded-lg px-3 py-2 text-sm text-slate-700 hover:bg-slate-100">{l.icon} {l.nome}</Link>
-                ))}
-              </div>
-            </details>
+            <MenuMais itens={mais} pendentes={pendentes} />
           </nav>
           <div className="ml-auto flex items-center gap-3">
             {carrega && <Link href="/upload" className="btn-primary hidden md:inline-flex">+ Carregar faturas</Link>}
@@ -42,9 +37,9 @@ export default async function Nav({ user }: { user: User }) {
 
       {/* Barra inferior no telemóvel */}
       <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {[PRINCIPAL[0], carrega ? { href: "/upload", nome: "Carregar", icon: "📷" } : PRINCIPAL[3], PRINCIPAL[1], PRINCIPAL[2], { href: "/mais", nome: pendentes ? `Mais (${pendentes})` : "Mais", icon: "☰" }].map((l) => (
+        {[PRINCIPAL[0], carrega ? { href: "/upload", nome: "Carregar", icon: "camara" } : PRINCIPAL[3], PRINCIPAL[1], PRINCIPAL[2], { href: "/mais", nome: pendentes ? `Mais (${pendentes})` : "Mais", icon: "menu" }].map((l) => (
           <Link key={l.href} href={l.href} className="flex flex-col items-center gap-0.5 py-2 text-xs text-slate-600">
-            <span className="text-xl">{l.icon}</span>{l.nome}
+            <Icone nome={l.icon} className="h-6 w-6" />{l.nome}
           </Link>
         ))}
       </nav>

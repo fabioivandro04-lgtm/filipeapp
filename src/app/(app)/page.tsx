@@ -7,6 +7,8 @@ import { criarFaturaManual } from "@/app/actions";
 import { CATEGORIA_INFO, money } from "@/lib/format";
 import FaturasLista from "@/components/FaturasLista";
 import { PageHeader, Stat } from "@/components/Ui";
+import { LembrarLista } from "@/components/Voltar";
+import { Suspense } from "react";
 
 export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string }> }) {
   const user = await requireUser();
@@ -20,6 +22,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
 
   return (
     <>
+      <Suspense><LembrarLista /></Suspense>
       <PageHeader titulo="Faturas" subtitulo="Tudo o que foi carregado, por ordem de data.">
         <a href={`/api/export?${qs}`} className="btn-ghost">Exportar Excel</a>
         {editaDireto(user) && <form action={criarFaturaManual}><button className="btn-ghost">+ Fatura manual</button></form>}

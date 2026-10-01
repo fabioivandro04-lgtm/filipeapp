@@ -54,7 +54,7 @@ export default async function Aprovacoes({ searchParams }: { searchParams: Promi
                 <time className="text-xs text-slate-400">{p.criado_em.slice(0, 16)}</time>
               </div>
               <div className="mt-2"><DiffLista diff={JSON.parse(p.alteracoes)} nomes={nomes} /></div>
-              {mudouEntretanto(p) && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-amber-900">⚠ A fatura foi alterada depois desta proposta. Ao aceitar, os valores propostos substituem os atuais.</p>}
+              {mudouEntretanto(p) && <p className="mt-2 rounded-lg bg-amber-50 p-2 text-amber-900">A fatura foi alterada depois desta proposta. Ao aceitar, os valores propostos substituem os atuais.</p>}
               {admin && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <form action={aceitarProposta.bind(null, p.id)}><button className="btn-primary px-3 py-1.5">Aceitar</button></form>

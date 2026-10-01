@@ -79,11 +79,11 @@ export default function Upload() {
       <form onSubmit={enviar} className="card space-y-5 p-5">
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="btn-primary cursor-pointer py-4">
-            📷 Tirar foto
+            Tirar foto
             <input type="file" accept="image/*" capture="environment" onChange={adicionar} disabled={ocupado} className="sr-only" />
           </label>
           <label className="btn-ghost cursor-pointer py-4">
-            📁 Escolher ficheiros
+            Escolher ficheiros
             <input type="file" multiple accept="image/*,application/pdf" onChange={adicionar} disabled={ocupado} className="sr-only" />
           </label>
         </div>
@@ -93,7 +93,7 @@ export default function Upload() {
             {files.map((f, i) => (
               <li key={i} className="flex items-center justify-between gap-2 px-3 py-2">
                 <span className="truncate">{f.name}</span>
-                {!ocupado && <button type="button" onClick={() => setFiles(files.filter((_, k) => k !== i))} className="text-slate-400 hover:text-red-600">✕</button>}
+                {!ocupado && <button type="button" onClick={() => setFiles(files.filter((_, k) => k !== i))} className="text-xs text-slate-500 hover:text-red-600">Remover</button>}
               </li>
             ))}
           </ul>

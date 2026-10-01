@@ -1,7 +1,6 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, todasMaquinas, todosPredios } from "@/lib/queries";
+import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, opcoesMaquinas, todosPredios } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/categorias";
 import { money } from "@/lib/format";
 import { aceitarProposta, apagarFatura, guardarFatura, rejeitarProposta } from "@/app/actions";
@@ -11,6 +10,7 @@ import DiffLista from "@/components/Diff";
 import { listarHistorico } from "@/lib/historico";
 import HistoricoLista from "@/components/HistoricoLista";
 import { PageHeader } from "@/components/Ui";
+import { Voltar } from "@/components/Voltar";
 
 type Item = { descricao: string; quantidade: number | null; preco_unitario: number | null; total: number | null };
 
@@ -23,7 +23,7 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
   const direto = editaDireto(user); // admin/operador editam; o contabilista propõe e o admin aceita
   const itens: Item[] = f.itens ? JSON.parse(f.itens) : [];
   const [predios, maquinas, empresas, registos, nomes, propostas] = await Promise.all([
-    todosPredios(), todasMaquinas(), todasEmpresas(), listarHistorico({ faturaId: f.id, limite: 50 }), carregarNomes(),
+    todosPredios(), opcoesMaquinas(), todasEmpresas(), listarHistorico({ faturaId: f.id, limite: 50 }), carregarNomes(),
     listarPropostas({ faturaId: f.id, estado: ["pendente"] }),
   ]);
   const minha = propostas.find((p) => p.user_id === user.id);
@@ -34,9 +34,9 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
 
   return (
     <>
-      <Link href="/" className="text-sm text-slate-500 hover:text-slate-900">← Faturas</Link>
+      <Voltar lista="/" texto="Faturas" />
       <div className="mt-2"><PageHeader titulo={f.fornecedor ?? "Fatura sem nome"} subtitulo={`Carregada por ${f.criado_por_nome} em ${f.criado_em.slice(0, 10)}`}>
-          {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>✓ QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
+          {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
           {f.enviada_em && <span className="badge bg-sky-100 text-sky-800">Enviada à contabilidade</span>}
         </PageHeader></div>
 
@@ -62,7 +62,7 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
         </div>
       ))}
 
-      {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">⚠ {f.alerta}</p>}
+      {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{f.alerta}</p>}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">
         <div className="card overflow-hidden lg:sticky lg:top-20 lg:self-start">

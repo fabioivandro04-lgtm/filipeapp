@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { editaDireto, requireUser } from "@/lib/auth";
-import { listarFaturas, maquinasComMesmaSerie, todasEmpresas, todasMaquinas } from "@/lib/queries";
+import { clientesAluguer, listarAlugueres, listarDocumentos, listarFaturas, maquinaPorId, maquinasComMesmaSerie, todasEmpresas } from "@/lib/queries";
+import { COR_PRAZO, ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, estadoPrazo, textoPrazo, type TipoDocumento } from "@/lib/prazos";
 import { empresaDoGrupo } from "@/lib/grupo";
 import { ESTADOS, ROTULO_ESTADO } from "@/lib/estados";
 import { COR_ESTADO, dataPt, money } from "@/lib/format";
-import { apagarEntidade, atualizarMaquina, restaurarEntidade } from "@/app/actions";
+import { apagarAluguer, apagarDocumento, apagarEntidade, atualizarMaquina, guardarAluguer, guardarDocumento, renovarDocumento, restaurarEntidade } from "@/app/actions";
 import ConfirmarBotao from "@/components/ConfirmarBotao";
 import { PageHeader, Stat, Vazio } from "@/components/Ui";
+import { Voltar } from "@/components/Voltar";
 
 type Item = { descricao: string; quantidade: number | null; total: number | null };
 
@@ -15,10 +17,14 @@ export default async function MaquinaPage({ params, searchParams }: { params: Pr
   const user = await requireUser();
   const { id } = await params;
   const sp = await searchParams;
-  const m = (await todasMaquinas(true)).find((x) => x.id === Number(id)); // inclui apagadas, para os links antigos continuarem a abrir
+  const m = await maquinaPorId(Number(id)); // inclui apagadas, para os links antigos continuarem a abrir
   if (!m) notFound();
-  const [faturas, empresas, mesmaSerie] = await Promise.all([listarFaturas(user, { maquina_id: m.id }), todasEmpresas(), maquinasComMesmaSerie(m)]);
+  const [faturas, empresas, mesmaSerie, documentos, alugueres, clientes] = await Promise.all([
+    listarFaturas(user, { maquina_id: m.id }), todasEmpresas(), maquinasComMesmaSerie(m), listarDocumentos({ maquinaId: m.id }), listarAlugueres(m.id), clientesAluguer()]);
   const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
+  const receitas = alugueres.reduce((s, a) => s + (a.valor ?? 0), 0);
+  const resultado = receitas - total;
+  const aqui = `/maquinas/${m.id}`;
   const podeEditar = editaDireto(user);
   const empresa = empresas.find((e) => e.id === m.empresa_id);
   const compradorGrupo = m.estado === "vendido" ? empresaDoGrupo(m.comprador, empresas) : null;
@@ -42,7 +48,7 @@ export default async function MaquinaPage({ params, searchParams }: { params: Pr
 
   return (
     <>
-      <Link href="/maquinas" className="text-sm text-slate-500 hover:text-slate-900">← Máquinas</Link>
+      <Voltar lista="/maquinas" texto="Máquinas" />
       <div className="mt-2">
         <PageHeader titulo={`Máquina ${m.numero_interno}${m.assinalada ? "*" : ""}`} subtitulo={m.descricao ?? undefined}>
           <span className={`badge ${COR_ESTADO[m.estado] ?? COR_ESTADO.outro}`}>{ROTULO_ESTADO[m.estado as keyof typeof ROTULO_ESTADO] ?? m.estado}</span>
@@ -70,10 +76,11 @@ export default async function MaquinaPage({ params, searchParams }: { params: Pr
         </div>
       )}
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:max-w-xl md:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat rotulo="Receitas em alugueres" valor={money(receitas)} />
         <Stat rotulo="Gasto em faturas" valor={money(total)} />
-        <Stat rotulo="Faturas" valor={String(faturas.length)} />
-        {m.valor_compra != null && <Stat rotulo="Valor de compra" valor={money(m.valor_compra)} />}
+        <Stat rotulo="Resultado" valor={money(resultado)} destaque={resultado < 0} />
+        {m.valor_compra != null ? <Stat rotulo="Valor de compra" valor={money(m.valor_compra)} /> : <Stat rotulo="Faturas" valor={String(faturas.length)} />}
       </div>
 
       {ficha.some(([, v]) => v) && (
@@ -112,6 +119,92 @@ export default async function MaquinaPage({ params, searchParams }: { params: Pr
           )}
         </details>
       )}
+
+      <h2 className="mb-3 text-lg font-semibold">Prazos e documentos</h2>
+      {documentos.length > 0 && (
+        <ul className="card mb-3 divide-y divide-slate-100">
+          {documentos.map((d) => {
+            const est = estadoPrazo(d.validade);
+            return (
+              <li key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm">
+                <div>
+                  <p className="font-medium">{ROTULO_DOCUMENTO[d.tipo as TipoDocumento] ?? d.tipo}{d.descricao ? ` · ${d.descricao}` : ""}</p>
+                  <p className="text-slate-500">Válido até {dataPt(d.validade)} <span className={`badge ml-1 ${COR_PRAZO[est]}`}>{textoPrazo(d.validade)}</span>
+                    {d.ficheiro_id && <> · <a href={`/api/documentos/${d.id}`} target="_blank" className="text-brand-600 hover:underline">ver documento</a></>}</p>
+                  {d.notas && <p className="text-slate-500">{d.notas}</p>}
+                </div>
+                {podeEditar && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <form action={renovarDocumento.bind(null, d.id)} className="flex items-center gap-2">
+                      <input type="hidden" name="voltar" value={aqui} />
+                      <input type="date" name="validade" required className="field py-1.5" aria-label="Nova validade" />
+                      <button className="btn-ghost px-3 py-1.5">Renovar</button>
+                    </form>
+                    {user.cargo === "admin" && (
+                      <form action={apagarDocumento.bind(null, d.id)}><input type="hidden" name="voltar" value={aqui} />
+                        <ConfirmarBotao className="btn-ghost px-3 py-1.5 text-red-600" mensagem="Apagar este documento?">Apagar</ConfirmarBotao></form>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {podeEditar && !m.apagada_em ? (
+        <details className="card mb-8 p-4" open={!documentos.length}>
+          <summary className="cursor-pointer text-sm font-medium">+ Adicionar seguro, inspeção, IUC ou certificado</summary>
+          <form action={guardarDocumento.bind(null, null)} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <input type="hidden" name="voltar" value={aqui} /><input type="hidden" name="maquina_id" value={m.id} />
+            <div><label className="label">Tipo</label>
+              <select name="tipo" required className="field">{TIPOS_DOCUMENTO.map((t) => <option key={t} value={t}>{ROTULO_DOCUMENTO[t]}</option>)}</select></div>
+            <div><label className="label">Válido até</label><input type="date" name="validade" required className="field" /></div>
+            <div><label className="label">Descrição (opcional)</label><input name="descricao" placeholder="Ex.: apólice nº, seguradora" className="field" /></div>
+            <div><label className="label">Comprovativo (opcional)</label><input type="file" name="ficheiro" accept="application/pdf,image/*" className="field py-1.5" /></div>
+            <input name="notas" placeholder="Notas (opcional)" className="field sm:col-span-2 lg:col-span-3" />
+            <button className="btn-primary">Guardar</button>
+          </form>
+        </details>
+      ) : !documentos.length && <div className="mb-8"><Vazio texto="Sem documentos com prazo registados." /></div>}
+
+      <h2 className="mb-3 text-lg font-semibold">Alugueres</h2>
+      {alugueres.length > 0 && (
+        <div className="card mb-3 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+              <tr><th className="px-4 py-3 text-left">Cliente</th><th className="px-4 py-3 text-left">Período</th><th className="px-4 py-3 text-left">Fatura</th><th className="px-4 py-3 text-right">Valor</th>{user.cargo === "admin" && <th />}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {alugueres.map((a) => (
+                <tr key={a.id}>
+                  <td className="px-4 py-2">{a.cliente ?? "—"}{a.notas && <span className="block text-xs text-slate-500">{a.notas}</span>}</td>
+                  <td className="whitespace-nowrap px-4 py-2">{dataPt(a.inicio)} → {a.fim ? dataPt(a.fim) : <span className="badge bg-sky-100 text-sky-800">a decorrer</span>}</td>
+                  <td className="px-4 py-2 text-slate-600">{a.fatura ?? ""}</td>
+                  <td className="px-4 py-2 text-right font-medium">{money(a.valor)}</td>
+                  {user.cargo === "admin" && <td className="px-2 py-2 text-right">
+                    <form action={apagarAluguer.bind(null, m.id, a.id)}><ConfirmarBotao className="text-xs text-slate-400 hover:text-red-600" mensagem="Apagar este aluguer?">Apagar</ConfirmarBotao></form></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {podeEditar && !m.apagada_em ? (
+        <details className="card mb-8 p-4" open={!alugueres.length}>
+          <summary className="cursor-pointer text-sm font-medium">+ Registar aluguer</summary>
+          <form action={guardarAluguer.bind(null, m.id, null)} className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="lg:col-span-2"><label className="label">Cliente</label>
+              <input name="cliente" list="clientes-aluguer" autoComplete="off" className="field" />
+              <datalist id="clientes-aluguer">{clientes.map((c) => <option key={c.cliente} value={c.cliente} />)}</datalist></div>
+            <div><label className="label">Início</label><input type="date" name="inicio" required className="field" /></div>
+            <div><label className="label">Fim (vazio = a decorrer)</label><input type="date" name="fim" className="field" /></div>
+            <div><label className="label">Valor (€, sem IVA)</label><input type="number" name="valor" step="0.01" min="0" required className="field" /></div>
+            <input name="fatura" placeholder="Nº da fatura (opcional)" className="field lg:col-span-2" />
+            <input name="notas" placeholder="Notas (opcional)" className="field lg:col-span-2" />
+            <button className="btn-primary">Guardar</button>
+          </form>
+        </details>
+      ) : !alugueres.length && <div className="mb-8"><Vazio texto="Sem alugueres registados." /></div>}
 
       <h2 className="mb-3 text-lg font-semibold">Faturas desta máquina</h2>
       {!consumos.length ? <Vazio texto={faturas.length ? "As faturas ligadas não têm artigos lidos." : "Ainda não há faturas ligadas a esta máquina. Escreva o nº interno ao rever uma fatura."} /> : (

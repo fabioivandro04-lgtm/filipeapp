@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { listarFaturas, mesesEmFalta } from "@/lib/queries";
+import { contarPrazos, listarFaturas, mesesEmFalta } from "@/lib/queries";
+import { DIAS_AVISO } from "@/lib/prazos";
 import { CATEGORIA_INFO } from "@/lib/format";
 import { nomeMes } from "@/components/Graficos";
 import FaturasLista from "@/components/FaturasLista";
@@ -8,10 +9,17 @@ import { PageHeader, Vazio } from "@/components/Ui";
 
 export default async function Alertas() {
   const user = await requireUser();
-  const [porRever, faltas] = await Promise.all([listarFaturas(user, { alerta: true }), mesesEmFalta(user)]);
+  const [porRever, faltas, prazos] = await Promise.all([listarFaturas(user, { alerta: true }), mesesEmFalta(user), contarPrazos(DIAS_AVISO)]);
   return (
     <>
       <PageHeader titulo="Alertas" subtitulo="O que precisa da sua atenção." />
+
+      {prazos.caducados + prazos.urgentes > 0 && (
+        <Link href="/prazos" className="card mb-8 block p-4 hover:border-brand-500">
+          <p className="font-medium">Prazos: {prazos.caducados} caducado(s) e {prazos.urgentes} a caducar nos próximos {DIAS_AVISO} dias</p>
+          <p className="mt-1 text-sm text-slate-500">Seguros, inspeções, IUC e certificados. Abrir Prazos e documentos.</p>
+        </Link>
+      )}
 
       <h2 className="mb-3 text-lg font-semibold">Faturas para rever ({porRever.length})</h2>
       <p className="mb-3 text-sm text-slate-500">Possíveis duplicados, valores fora do normal, dados por ler ou sem prédio. Abra a fatura, corrija e marque «revista».</p>

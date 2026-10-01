@@ -53,7 +53,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
         <Stat rotulo="Total" valor={money(total)} />
         <Stat rotulo="Por rever" valor={String(porRever)} destaque={porRever > 0} />
       </div>
-      {porRever > 0 && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">⚠ {porRever} fatura(s) têm avisos por rever. <Link href="/alertas" className="underline">Ver alertas</Link> antes de enviar.</p>}
+      {porRever > 0 && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{porRever} fatura(s) têm avisos por rever. <Link href="/alertas" className="underline">Ver alertas</Link> antes de enviar.</p>}
       {semFicheiro > 0 && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{semFicheiro} fatura(s) não têm ficheiro anexo e só aparecem no Excel.</p>}
 
       <div className="card mb-6 overflow-x-auto">

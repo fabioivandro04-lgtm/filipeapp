@@ -77,6 +77,11 @@ type Totais = { n: number; total: number };
 const ativo = (incluirApagados: boolean) => (incluirApagados ? "" : "WHERE apagada_em IS NULL");
 export const todosPredios = (incluirApagados = false) => query<Predio>(`SELECT * FROM predios ${ativo(incluirApagados)} ORDER BY nome`);
 export const todasMaquinas = (incluirApagados = false) => query<Maquina>(`SELECT * FROM maquinas ${ativo(incluirApagados)} ORDER BY numero_interno`);
+/** Só o necessário para escolher uma máquina numa lista (são centenas: não vale a pena trazer a ficha toda). */
+export const opcoesMaquinas = () =>
+  query<{ id: number; numero_interno: string; descricao: string | null }>("SELECT id, numero_interno, descricao FROM maquinas WHERE apagada_em IS NULL ORDER BY numero_interno");
+/** Uma máquina pelo id (inclui apagadas, para os links antigos continuarem a abrir). */
+export const maquinaPorId = (id: number) => queryOne<Maquina>("SELECT * FROM maquinas WHERE id = ?", [id]);
 export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null; apagada_em: string | null };
 export const todasEmpresas = (incluirApagadas = false) => query<Empresa>(`SELECT * FROM empresas ${ativo(incluirApagadas)} ORDER BY nome`);
 
@@ -245,15 +250,20 @@ export async function mesesEmFalta(u: User) {
 }
 
 // ---------- Utilizadores ----------
-export type Utilizador = { id: number; nome: string; email: string; cargo: string; ativo: number };
+export type Utilizador = { id: number; nome: string; email: string; cargo: string; ativo: number; visto_em: string | null; ultimo_login: string | null; sessoes: number };
+/** Com presença: `visto_em` = último pedido à app; `sessoes` = sessões abertas (não expiradas). */
 export const todosUtilizadores = () =>
-  query<Utilizador>("SELECT id, nome, email, cargo, ativo FROM users ORDER BY ativo DESC, nome");
+  query<Utilizador>(`SELECT u.id, u.nome, u.email, u.cargo, u.ativo, u.visto_em, u.ultimo_login,
+      (SELECT COUNT(*)::int FROM sessions s WHERE s.user_id = u.id AND s.expires_at > ?) AS sessoes
+    FROM users u ORDER BY u.ativo DESC, u.visto_em DESC NULLS LAST, u.nome`, [Date.now()]);
 
 // ---------- Nomes (para mostrar ids como texto) ----------
 export type Nomes = { empresas: Record<number, string>; predios: Record<number, string>; maquinas: Record<number, string> };
 
 export async function carregarNomes(): Promise<Nomes> {
-  const [e, p, m] = await Promise.all([todasEmpresas(true), todosPredios(true), todasMaquinas(true)]);
+  const [e, p, m] = await Promise.all([
+    query<{ id: number; nome: string }>("SELECT id, nome FROM empresas"), query<{ id: number; nome: string }>("SELECT id, nome FROM predios"),
+    query<{ id: number; numero_interno: string }>("SELECT id, numero_interno FROM maquinas")]);
   return {
     empresas: Object.fromEntries(e.map((x) => [x.id, x.nome])),
     predios: Object.fromEntries(p.map((x) => [x.id, x.nome])),
@@ -309,4 +319,88 @@ export async function listarApagados() {
     query<{ id: number; nome: string; email: string; cargo: string }>("SELECT id, nome, email, cargo FROM users WHERE ativo = 0 ORDER BY nome"),
   ]);
   return { faturas, empresas, predios, maquinas, utilizadores };
+}
+
+// ---------- Documentos com prazo ----------
+export type Documento = {
+  id: number; maquina_id: number | null; empresa_id: number | null; tipo: string; descricao: string | null; validade: string;
+  ficheiro_id: number | null; notas: string | null; criado_em: string; maquina_numero: string | null; maquina_descricao: string | null;
+  maquina_estado: string | null; empresa_nome: string | null;
+};
+
+export function listarDocumentos(f: { maquinaId?: number; empresaId?: number; tipo?: string; ate?: string } = {}) {
+  const where = ["d.apagado_em IS NULL", "(d.maquina_id IS NULL OR m.apagada_em IS NULL)"];
+  const args: unknown[] = [];
+  if (f.maquinaId) { where.push("d.maquina_id = ?"); args.push(f.maquinaId); }
+  if (f.empresaId) { where.push("COALESCE(d.empresa_id, m.empresa_id) = ?"); args.push(f.empresaId); }
+  if (f.tipo) { where.push("d.tipo = ?"); args.push(f.tipo); }
+  if (f.ate) { where.push("d.validade <= ?"); args.push(f.ate); }
+  return query<Documento>(
+    `SELECT d.*, m.numero_interno AS maquina_numero, m.descricao AS maquina_descricao, m.estado AS maquina_estado,
+       COALESCE(e.nome, em.nome) AS empresa_nome
+     FROM documentos d LEFT JOIN maquinas m ON m.id = d.maquina_id LEFT JOIN empresas e ON e.id = d.empresa_id LEFT JOIN empresas em ON em.id = m.empresa_id
+     WHERE ${where.join(" AND ")} ORDER BY d.validade, d.id`, args);
+}
+
+/** Quantos documentos caducados ou a caducar nos próximos `dias` (só de máquinas que ainda não foram vendidas/abatidas). */
+export async function contarPrazos(dias = 30) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const limite = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
+  const r = await queryOne<{ caducados: number; urgentes: number }>(
+    `SELECT COALESCE(SUM(CASE WHEN d.validade < ? THEN 1 ELSE 0 END),0)::int AS caducados,
+            COALESCE(SUM(CASE WHEN d.validade >= ? AND d.validade <= ? THEN 1 ELSE 0 END),0)::int AS urgentes
+     FROM documentos d LEFT JOIN maquinas m ON m.id = d.maquina_id
+     WHERE d.apagado_em IS NULL AND (d.maquina_id IS NULL OR (m.apagada_em IS NULL AND m.estado NOT IN ('vendido','abatido')))`,
+    [hoje, hoje, limite]);
+  return r ?? { caducados: 0, urgentes: 0 };
+}
+
+// ---------- Alugueres e rentabilidade ----------
+export type Aluguer = { id: number; maquina_id: number; cliente: string | null; inicio: string; fim: string | null; valor: number; fatura: string | null; notas: string | null; criado_em: string };
+export const listarAlugueres = (maquinaId: number) =>
+  query<Aluguer>("SELECT * FROM alugueres WHERE maquina_id = ? AND apagado_em IS NULL ORDER BY inicio DESC, id DESC", [maquinaId]);
+
+/** Clientes já usados (para sugerir ao escrever). */
+export const clientesAluguer = () =>
+  query<{ cliente: string }>("SELECT DISTINCT cliente FROM alugueres WHERE cliente IS NOT NULL AND apagado_em IS NULL ORDER BY cliente LIMIT 500");
+
+export type LinhaRentabilidade = {
+  id: number; numero_interno: string; descricao: string | null; estado: string; empresa_nome: string | null; valor_compra: number | null;
+  receitas: number; custos: number; n_alugueres: number; n_faturas: number; dias_alugada_12m: number; receitas_12m: number; custos_12m: number;
+  ultimo_aluguer: string | null; alugada_agora: boolean;
+};
+
+/**
+ * Por máquina: o que rendeu em alugueres contra o que custou em faturas (peças, reparações…).
+ * Os «12 meses» servem para ver a situação atual, não só o acumulado desde a compra.
+ */
+export function rentabilidade(f: { empresaId?: number; estado?: string } = {}) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  const ha12 = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
+  const where = ["m.apagada_em IS NULL"];
+  const args: unknown[] = [ha12, hoje, ha12, ha12, hoje, hoje];
+  // Parâmetros numerados à mão ($1…$6 abaixo); os filtros continuam a numeração
+  if (f.empresaId) { args.push(f.empresaId); where.push(`m.empresa_id = $${args.length}`); }
+  if (f.estado) { args.push(f.estado); where.push(`m.estado = $${args.length}`); }
+  // Dias alugada nos últimos 12 meses: interseção de cada aluguer com a janela [há 12 meses, hoje]
+  return query<LinhaRentabilidade>(
+    `WITH a AS (
+       SELECT maquina_id, COUNT(*)::int AS n, COALESCE(SUM(valor),0)::float8 AS receitas,
+         COALESCE(SUM(GREATEST(0, (LEAST(COALESCE(fim, $2)::date, $2::date) - GREATEST(inicio::date, $1::date)) + 1)),0)::int AS dias_12m,
+         COALESCE(SUM(CASE WHEN COALESCE(fim, inicio) >= $3 THEN valor ELSE 0 END),0)::float8 AS receitas_12m,
+         MAX(inicio) AS ultimo
+       FROM alugueres WHERE apagado_em IS NULL GROUP BY maquina_id),
+     c AS (
+       SELECT maquina_id, COUNT(*)::int AS n, COALESCE(SUM(total),0)::float8 AS custos,
+         COALESCE(SUM(CASE WHEN COALESCE(data, substr(criado_em,1,10)) >= $4 THEN total ELSE 0 END),0)::float8 AS custos_12m
+       FROM faturas WHERE apagada_em IS NULL AND maquina_id IS NOT NULL GROUP BY maquina_id),
+     agora AS (SELECT DISTINCT maquina_id FROM alugueres WHERE apagado_em IS NULL AND inicio <= $5 AND (fim IS NULL OR fim >= $6))
+     SELECT m.id, m.numero_interno, m.descricao, m.estado, e.nome AS empresa_nome, m.valor_compra,
+       COALESCE(a.receitas,0)::float8 AS receitas, COALESCE(c.custos,0)::float8 AS custos, COALESCE(a.n,0)::int AS n_alugueres, COALESCE(c.n,0)::int AS n_faturas,
+       LEAST(COALESCE(a.dias_12m,0), 365)::int AS dias_alugada_12m, COALESCE(a.receitas_12m,0)::float8 AS receitas_12m, COALESCE(c.custos_12m,0)::float8 AS custos_12m,
+       a.ultimo AS ultimo_aluguer, (agora.maquina_id IS NOT NULL) AS alugada_agora
+     FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id LEFT JOIN a ON a.maquina_id = m.id LEFT JOIN c ON c.maquina_id = m.id
+       LEFT JOIN agora ON agora.maquina_id = m.id
+     WHERE ${where.join(" AND ")} ORDER BY m.numero_interno`,
+    args);
 }

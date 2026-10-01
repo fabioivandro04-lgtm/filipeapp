@@ -108,7 +108,7 @@ export default function ImportarStock({ empresas }: { empresas: Empresa[] }) {
 
           {(res.renumeradas?.length ?? 0) > 0 && (
             <details className="card p-4" open>
-              <summary className="cursor-pointer text-sm font-medium text-amber-800">⚠ {res.renumeradas!.length} nº(s) repetido(s) para máquinas diferentes: entram com sufixo (-B) para rever</summary>
+              <summary className="cursor-pointer text-sm font-medium text-amber-800">{res.renumeradas!.length} nº(s) repetido(s) para máquinas diferentes: entram com sufixo (-B) para rever</summary>
               <ul className="mt-2 space-y-1 text-sm text-slate-600">
                 {res.renumeradas!.map((x, i) => <li key={i}><span className="font-medium">{x.de}</span> → <span className="font-medium">{x.para}</span> <span className="text-slate-400">({x.folha}, linha {x.linha}: {x.motivo})</span></li>)}
               </ul>

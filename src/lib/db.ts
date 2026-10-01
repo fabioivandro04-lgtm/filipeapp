@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { hashPassword } from "./password";
 
 // Pasta de dados locais (só usada sem DATABASE_URL)
@@ -40,7 +40,7 @@ async function criarDriver(): Promise<Driver> {
   };
 }
 
-const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico", "propostas"];
+const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico", "propostas", "documentos", "alugueres"];
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -147,6 +147,41 @@ const SCHEMA = `
     decidido_em TEXT,
     motivo TEXT
   );
+  -- Presença: última vez que cada pessoa usou a app e último login
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS visto_em TEXT;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS ultimo_login TEXT;
+  CREATE INDEX IF NOT EXISTS historico_user_idx ON historico(user_id);
+  -- Documentos com prazo (seguro, inspeção, IUC, certificados…) de uma máquina ou empresa
+  CREATE TABLE IF NOT EXISTS documentos (
+    id SERIAL PRIMARY KEY,
+    maquina_id INTEGER REFERENCES maquinas(id),
+    empresa_id INTEGER REFERENCES empresas(id),
+    tipo TEXT NOT NULL,
+    descricao TEXT,
+    validade TEXT NOT NULL,                        -- AAAA-MM-DD
+    ficheiro_id INTEGER REFERENCES ficheiros(id) ON DELETE SET NULL,
+    notas TEXT,
+    criado_por INTEGER REFERENCES users(id),
+    criado_em TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    apagado_em TEXT
+  );
+  CREATE INDEX IF NOT EXISTS documentos_maquina_idx ON documentos(maquina_id);
+  -- Alugueres (receitas) de cada máquina, para a rentabilidade
+  CREATE TABLE IF NOT EXISTS alugueres (
+    id SERIAL PRIMARY KEY,
+    maquina_id INTEGER NOT NULL REFERENCES maquinas(id),
+    cliente TEXT,
+    inicio TEXT NOT NULL,                          -- AAAA-MM-DD
+    fim TEXT,                                      -- vazio = ainda alugada
+    valor DOUBLE PRECISION NOT NULL DEFAULT 0,
+    fatura TEXT,
+    notas TEXT,
+    criado_por INTEGER REFERENCES users(id),
+    criado_em TEXT NOT NULL DEFAULT to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
+    apagado_em TEXT
+  );
+  CREATE INDEX IF NOT EXISTS alugueres_maquina_idx ON alugueres(maquina_id);
+  CREATE INDEX IF NOT EXISTS faturas_maquina_idx ON faturas(maquina_id);
   -- Cargos antigos (por categoria) passam ao mais restrito: o contabilista propõe e um admin aceita.
   UPDATE users SET cargo = 'contabilista' WHERE cargo NOT IN ('admin', 'operador', 'contabilista');
   -- No Supabase, sem RLS as tabelas ficariam legíveis por qualquer pessoa via API pública.
@@ -168,9 +203,21 @@ function senhaInicial(env: string, exemplo: string, quem: string): string {
   return gerada;
 }
 
+// Muda sempre que o SCHEMA muda: só então se volta a correr (evita dezenas de ALTER TABLE, e os seus bloqueios, em cada arranque)
+const VERSAO_SCHEMA = createHash("sha1").update(SCHEMA).digest("hex").slice(0, 12);
+
+async function versaoAtual(d: Driver): Promise<string | null> {
+  try {
+    return ((await d.query("SELECT valor FROM config WHERE chave = 'schema_versao'", []))[0]?.valor as string) ?? null;
+  } catch { return null; } // ainda não há tabela config
+}
+
 async function iniciar(): Promise<Driver> {
   const d = await criarDriver();
-  await d.exec(SCHEMA);
+  if ((await versaoAtual(d)) !== VERSAO_SCHEMA) {
+    await d.exec(SCHEMA);
+    await d.query("INSERT INTO config (chave, valor) VALUES ('schema_versao', $1) ON CONFLICT (chave) DO UPDATE SET valor = EXCLUDED.valor", [VERSAO_SCHEMA]);
+  }
   const n = Number((await d.query("SELECT COUNT(*)::int AS n FROM users", []))[0].n);
   if (n === 0) {
     const ins = "INSERT INTO users (nome,email,password_hash,cargo) VALUES ($1,$2,$3,$4) ON CONFLICT (email) DO NOTHING";

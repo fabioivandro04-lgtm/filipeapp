@@ -6,6 +6,8 @@ import { ESTADOS, ROTULO_ESTADO } from "@/lib/estados";
 import { COR_ESTADO, money } from "@/lib/format";
 import { criarMaquina } from "@/app/actions";
 import { PageHeader, Stat, Vazio } from "@/components/Ui";
+import { LembrarLista } from "@/components/Voltar";
+import { Suspense } from "react";
 
 type SP = { ok?: string; erro?: string; empresa?: string; estado?: string; q?: string; p?: string };
 
@@ -48,6 +50,7 @@ export default async function Maquinas({ searchParams }: { searchParams: Promise
 
   return (
     <>
+      <Suspense><LembrarLista /></Suspense>
       <PageHeader titulo="Máquinas" subtitulo="O inventário do grupo. Cada máquina pertence a uma empresa; vendas entre empresas do grupo contam como transferências.">
         <a href={`/api/maquinas/export${qs({})}`} className="btn-ghost">Exportar Excel</a>
         {admin && <Link href="/maquinas/importar" className="btn-primary">Importar stock</Link>}
