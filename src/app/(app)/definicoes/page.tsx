@@ -6,6 +6,8 @@ import { dataHoraPt } from "@/lib/format";
 import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
 import FormSenha from "@/components/FormSenha";
 import { PageHeader } from "@/components/Ui";
+import Icone from "@/components/Icone";
+import Link from "next/link";
 
 const CARGO: Record<string, string> = { admin: "Administrador (faz tudo)", operador: "Operador (carrega e edita)", contabilista: "Contabilista (propõe edições; o admin aceita)" };
 
@@ -31,7 +33,7 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
   const viaAmbiente = smtp?.origem === "ambiente";
   const abas = [
     { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" },
-    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }] : []),
+    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
   ];
 
   return (
@@ -120,6 +122,26 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
               <input name="emails" defaultValue={emailConta ?? ""} placeholder="email da contabilista" className="field" />
               <button className="btn-primary shrink-0">Guardar</button>
             </form>
+          </Seccao>
+        )}
+
+        {admin && (
+          <Seccao id="dados" titulo="Dados e registos" desc="O registo de tudo o que foi feito, o que foi apagado e a cópia de segurança dos dados.">
+            <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
+              {[
+                { href: "/historico", nome: "Histórico", desc: "Quem fez o quê e quando, com opção de desfazer edições", icon: "historico" },
+                { href: "/apagados", nome: "Apagados", desc: "Restaurar faturas, empresas, prédios, máquinas e utilizadores", icon: "apagados" },
+                { href: "/copias", nome: "Cópia de segurança", desc: "Descarregar todos os dados e faturas", icon: "copias" },
+              ].map((l) => (
+                <li key={l.href}>
+                  <Link href={l.href} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50">
+                    <Icone nome={l.icon} className="h-5 w-5 shrink-0 text-slate-400" />
+                    <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{l.nome}</span><span className="block text-xs text-slate-500">{l.desc}</span></span>
+                    <Icone nome="seta" className="h-4 w-4 -rotate-90 text-slate-400" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </Seccao>
         )}
       </div>

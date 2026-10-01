@@ -1,7 +1,7 @@
 import type { User } from "./auth";
 
 /** `icon` = nome de um ícone de components/Icone.tsx; `contador` = número em destaque (ex.: pendentes). */
-export type ItemMenu = { href: string; nome: string; desc: string; icon: string; contador?: number };
+export type ItemMenu = { href: string; nome: string; desc: string; icon: string; contador?: number; /** outras páginas que contam como esta (destaque no menu) */ inclui?: string[] };
 export type Seccao = { titulo: string; itens: ItemMenu[] };
 
 /** Atalhos da barra de baixo no telemóvel (as restantes páginas ficam em «Mais»). */
@@ -31,16 +31,16 @@ export function seccoes(u: User, c: { pendentes?: number; prazos?: number } = {}
     ...(admin ? [{ titulo: "Administração", itens: [
       { href: "/empresas", nome: "Empresas", desc: "Nome, NIF e morada das suas empresas", icon: "empresas" },
       { href: "/utilizadores", nome: "Utilizadores", desc: "Pessoas, cargos e quem está online", icon: "utilizadores" },
-      { href: "/historico", nome: "Histórico", desc: "Quem fez o quê e quando", icon: "historico" },
-      { href: "/apagados", nome: "Apagados", desc: "Restaurar faturas, empresas, prédios, máquinas e utilizadores", icon: "apagados" },
-      { href: "/copias", nome: "Cópia de segurança", desc: "Descarregar todos os dados e faturas", icon: "copias" },
     ] }] : []),
     { titulo: "Conta", itens: [
-      { href: "/definicoes", nome: "Definições", desc: admin ? "Perfil, palavra-passe, alertas por email e servidor de email" : "Perfil e palavra-passe", icon: "definicoes" },
+      { href: "/definicoes", nome: "Definições", icon: "definicoes",
+        desc: admin ? "Perfil, alertas por email, servidor de email, histórico, apagados e cópia de segurança" : "Perfil e palavra-passe",
+        inclui: admin ? ["/historico", "/apagados", "/copias"] : undefined },
     ] },
   ];
 }
 
 /** A página atual pertence a este item? («/» só conta para a lista e as fichas de faturas.) */
-export const ativo = (href: string, caminho: string) =>
-  href === "/" ? caminho === "/" || caminho.startsWith("/faturas") : caminho === href || caminho.startsWith(`${href}/`);
+const dentro = (href: string, caminho: string) => caminho === href || caminho.startsWith(`${href}/`);
+export const ativo = (href: string, caminho: string, inclui: string[] = []) =>
+  href === "/" ? caminho === "/" || caminho.startsWith("/faturas") : dentro(href, caminho) || inclui.some((h) => dentro(h, caminho));

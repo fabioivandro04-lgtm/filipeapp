@@ -26,7 +26,7 @@ export default function MenuLateral({ seccoes, nome, cargo, carrega }: { seccoes
             <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{s.titulo}</p>
             <ul className="space-y-0.5">
               {s.itens.map((l) => {
-                const aqui = ativo(l.href, caminho);
+                const aqui = ativo(l.href, caminho, l.inclui);
                 return (
                   <li key={l.href}>
                     <Link href={l.href} aria-current={aqui ? "page" : undefined}

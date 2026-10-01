@@ -33,6 +33,8 @@ export default async function Apagados({ searchParams }: { searchParams: Promise
 
   return (
     <>
+      <Link href="/definicoes#dados" className="text-sm text-slate-500 hover:text-slate-900">← Definições</Link>
+      <div className="mt-2" />
       <PageHeader titulo="Apagados" subtitulo="Nada é apagado para sempre: tudo o que apagou pode ser restaurado aqui." />
       {sp.ok && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{sp.ok}</p>}
       {sp.erro && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sp.erro}</p>}

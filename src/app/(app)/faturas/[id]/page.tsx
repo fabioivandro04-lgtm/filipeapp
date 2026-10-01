@@ -149,7 +149,7 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
           )}
 
           {user.cargo === "admin" && (
-            <form action={apagarFatura.bind(null, f.id)}><ConfirmarBotao className="btn-danger" mensagem="Apagar esta fatura? Pode restaurá-la em Apagados.">Apagar fatura</ConfirmarBotao><p className="mt-1 text-xs text-slate-500">Pode ser restaurada em Mais → Apagados.</p></form>
+            <form action={apagarFatura.bind(null, f.id)}><ConfirmarBotao className="btn-danger" mensagem="Apagar esta fatura? Pode restaurá-la em Apagados.">Apagar fatura</ConfirmarBotao><p className="mt-1 text-xs text-slate-500">Pode ser restaurada em Definições → Apagados.</p></form>
           )}
         </div>
       </div>

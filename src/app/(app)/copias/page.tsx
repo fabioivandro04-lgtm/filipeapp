@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { queryOne } from "@/lib/db";
@@ -13,6 +14,8 @@ export default async function Copias() {
             (SELECT COALESCE(SUM(octet_length(dados)),0)::float8 / 1048576 FROM ficheiros) AS mb`))!;
   return (
     <>
+      <Link href="/definicoes#dados" className="text-sm text-slate-500 hover:text-slate-900">← Definições</Link>
+      <div className="mt-2" />
       <PageHeader titulo="Cópia de segurança" subtitulo="Guarde uma cópia de tudo fora da internet, para o caso de algo correr mal." />
       <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat rotulo="Faturas" valor={String(r.faturas)} />

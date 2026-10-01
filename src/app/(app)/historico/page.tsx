@@ -32,6 +32,8 @@ export default async function Historico({ searchParams }: { searchParams: Promis
 
   return (
     <>
+      <Link href="/definicoes#dados" className="text-sm text-slate-500 hover:text-slate-900">← Definições</Link>
+      <div className="mt-2" />
       <PageHeader titulo="Histórico" subtitulo="Quem fez o quê e quando: faturas, máquinas, prazos, alugueres, empresas, utilizadores e entradas na app." />
       <form className="mb-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-6">
         <select name="u" defaultValue={sp.u ?? ""} className="field">

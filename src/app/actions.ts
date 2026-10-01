@@ -63,7 +63,7 @@ async function obterEmpresaId(nome: string | null): Promise<number | null | "apa
   if (e) return e.apagada_em ? "apagada" : e.id;
   return (await queryOne<{ id: number }>("INSERT INTO empresas (nome) VALUES (?) RETURNING id", [nome]))!.id;
 }
-const MSG_EMPRESA_APAGADA = (n: string) => `A empresa «${n}» foi apagada. Peça a um administrador para a restaurar (Mais → Apagados).`;
+const MSG_EMPRESA_APAGADA = (n: string) => `A empresa «${n}» foi apagada. Peça a um administrador para a restaurar (Definições → Apagados).`;
 
 export type VerificacaoQr = { duplicada?: { id: number; fornecedor: string | null; numero: string | null }; empresa?: string | null };
 
@@ -373,7 +373,7 @@ export async function apagarEntidade(tabela: Entidade, id: number) {
   await query(`UPDATE ${tabela} SET apagada_em = ${AGORA} WHERE id = ?`, [id]);
   await registar(u, null, `${E.tipo}_apagada`, { nome: r!.nome, [`${E.tipo}_id`]: id });
   revalidatePath("/", "layout");
-  irPara(`/${tabela}`, "ok", `Apagado: ${r!.nome}. Pode restaurar em Mais → Apagados.`);
+  irPara(`/${tabela}`, "ok", `Apagado: ${r!.nome}. Pode restaurar em Definições → Apagados.`);
 }
 
 export async function restaurarEntidade(tabela: Entidade, id: number) {
@@ -428,7 +428,7 @@ export async function criarMaquina(form: FormData) {
       "INSERT INTO maquinas (numero_interno, descricao, empresa_id, designacao, marca, modelo, estado) VALUES (?,?,?,?,?,?, 'stock') RETURNING id",
       [numero, descricaoDe(d) || null, num(form.get("empresa")), d.designacao, d.marca, d.modelo]);
   } catch { r = undefined; }
-  if (!r) irPara("/maquinas", "erro", `Já existe uma máquina com o nº ${numero} (pode estar apagada: veja Mais → Apagados).`);
+  if (!r) irPara("/maquinas", "erro", `Já existe uma máquina com o nº ${numero} (pode estar apagada: veja Definições → Apagados).`);
   await registar(u, null, "maquina_criada", { nome: numero, maquina_id: r!.id });
   revalidatePath("/maquinas");
   irPara(`/maquinas/${r!.id}`, "ok", `Máquina ${numero} criada. Complete os dados abaixo.`);
@@ -659,7 +659,7 @@ export async function guardarEmpresa(id: number | null, form: FormData) {
     if (id) await query("UPDATE empresas SET nome = ?, nif = ?, morada = ?, codigo_postal = ?, localidade = ? WHERE id = ?", [nome, nif, morada, cp, localidade, id]);
     else await query("INSERT INTO empresas (nome, nif, morada, codigo_postal, localidade) VALUES (?, ?, ?, ?, ?)", [nome, nif, morada, cp, localidade]);
   } catch {
-    voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF (pode estar apagada: veja Mais → Apagados).");
+    voltarEmpresas("erro", "Já existe uma empresa com esse nome ou NIF (pode estar apagada: veja Definições → Apagados).");
   }
   await registar(u, null, id ? "empresa_editada" : "empresa_criada", { nome });
   revalidatePath("/empresas");
