@@ -9,5 +9,5 @@ export async function GET(_: Request, { params }: { params: Promise<{ id: string
   const f = await queryOne<{ mime: string; dados: Uint8Array }>(
     "SELECT fi.mime, fi.dados FROM documentos d JOIN ficheiros fi ON fi.id = d.ficheiro_id WHERE d.id = ? AND d.apagado_em IS NULL", [Number(id)]);
   if (!f) return new Response("Não encontrado", { status: 404 });
-  return new Response(new Uint8Array(f.dados), { headers: { "Content-Type": f.mime, "Cache-Control": "private, max-age=3600" } });
+  return new Response(new Uint8Array(f.dados), { headers: { "Content-Type": f.mime, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff", "Content-Disposition": "inline" } });
 }

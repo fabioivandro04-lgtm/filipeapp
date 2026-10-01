@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { query, queryOne, CATEGORIAS, CARGOS } from "@/lib/db";
 import { cookies } from "next/headers";
-import { editaDireto, login, logout, requireUser } from "@/lib/auth";
+import { editaDireto, login, logout, requireUser, terminarSessoes } from "@/lib/auth";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { avaliar } from "@/lib/alertas";
 import { lerQrFiscal } from "@/lib/qr";
@@ -19,6 +19,8 @@ import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 import { fotosParaPdf, imagemConvertivel } from "@/lib/pdf";
+import { tipoReal } from "@/lib/ficheiros";
+import { cifrar } from "@/lib/segredo";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -40,7 +42,7 @@ export async function alterarSenha(_: ResultadoConta | null, form: FormData): Pr
   await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(nova), u.id]);
   // Termina as outras sessões deste utilizador (fica só a atual)
   const token = (await cookies()).get("session")?.value ?? "";
-  await query("DELETE FROM sessions WHERE user_id = ? AND token <> ?", [u.id, token]);
+  await terminarSessoes(u.id, token);
   await registar(u, null, "utilizador_senha_propria", { nome: u.nome });
   return { ok: true };
 }
@@ -50,7 +52,6 @@ export async function sair() {
   redirect("/login");
 }
 
-const MIMES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf"]);
 // A Vercel recusa pedidos acima de ~4,5 MB; as fotos são comprimidas no browser antes de chegarem aqui.
 const MAX_BYTES = 4 * 1024 * 1024;
 
@@ -89,22 +90,29 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   const unico = form.get("ficheiro");
   const ficheiros = paginas.length ? paginas : unico instanceof File && unico.size > 0 ? [unico] : [];
   if (!ficheiros.length) return { erro: "Ficheiro em falta." };
-  for (const f of ficheiros) if (!MIMES.has(f.type)) return { erro: `Tipo de ficheiro não suportado: ${f.name}` };
+  // O tipo vem do CONTEÚDO do ficheiro, não do que o browser declara
+  const reais: { file: File; mime: string; dados: Buffer }[] = [];
+  for (const f of ficheiros) {
+    const dados = Buffer.from(await f.arrayBuffer());
+    const mime = tipoReal(dados);
+    if (!mime) return { erro: `${f.name}: só são aceites PDF e fotos (JPEG, PNG, WebP).` };
+    reais.push({ file: f, mime, dados });
+  }
   if (ficheiros.reduce((s, f) => s + f.size, 0) > MAX_BYTES) return { erro: "A fatura é demasiado grande (máx. 4 MB). Tente fotos em vez de PDF, ou menos páginas." };
 
   const categoriaManual = String(form.get("categoria") ?? "");
   // Fotos são guardadas como PDF (com a foto intacta): é o formato que a plataforma da contabilidade lê, QR incluído
-  let file: { type: string } = ficheiros[0];
-  let bytes = Buffer.from(await ficheiros[0].arrayBuffer());
-  let paraLer = { bytes, mime: ficheiros[0].type }; // o que a leitura automática recebe
-  if (ficheiros.every((f) => imagemConvertivel(f.type))) {
-    const imagens = await Promise.all(ficheiros.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), mime: f.type })));
+  let file: { type: string } = { type: reais[0].mime };
+  let bytes = reais[0].dados;
+  let paraLer = { bytes, mime: reais[0].mime }; // o que a leitura automática recebe
+  if (reais.every((r) => imagemConvertivel(r.mime))) {
+    const imagens = reais.map((r) => ({ bytes: new Uint8Array(r.dados), mime: r.mime }));
     try {
       bytes = Buffer.from(await fotosParaPdf(imagens));
       file = { type: "application/pdf" };
       paraLer = ficheiros.length === 1 ? { bytes: Buffer.from(imagens[0].bytes), mime: imagens[0].mime } : { bytes, mime: "application/pdf" };
     } catch { /* se a conversão falhar, guarda a foto como veio */ }
-  } else if (ficheiros.length > 1) return { erro: "Várias páginas só com fotos (JPEG/PNG)." };
+  } else if (reais.length > 1) return { erro: "Várias páginas só com fotos (JPEG/PNG)." };
   const nomeEmpresa = String(form.get("empresa") ?? "").trim() || null;
   let empresaId = await obterEmpresaId(nomeEmpresa);
   if (empresaId === "apagada") return { erro: MSG_EMPRESA_APAGADA(nomeEmpresa!) };
@@ -366,8 +374,8 @@ const irPara = (pagina: string, tipo: "ok" | "erro", msg: string): never => redi
 
 export async function apagarEntidade(tabela: Entidade, id: number) {
   const u = await adminOuSai();
+  if (!Object.hasOwn(ENTIDADES, tabela)) return; // só as tabelas conhecidas (o nome vai para o SQL)
   const E = ENTIDADES[tabela];
-  if (!E) return;
   const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NULL`, [id]);
   if (!r) irPara(`/${tabela}`, "erro", "Já foi apagado ou não existe.");
   await query(`UPDATE ${tabela} SET apagada_em = ${AGORA} WHERE id = ?`, [id]);
@@ -378,8 +386,8 @@ export async function apagarEntidade(tabela: Entidade, id: number) {
 
 export async function restaurarEntidade(tabela: Entidade, id: number) {
   const u = await adminOuSai();
+  if (!Object.hasOwn(ENTIDADES, tabela)) return;
   const E = ENTIDADES[tabela];
-  if (!E) return;
   const r = await queryOne<{ nome: string }>(`SELECT ${E.coluna} AS nome FROM ${tabela} WHERE id = ? AND apagada_em IS NOT NULL`, [id]);
   if (!r) irPara("/apagados", "erro", "Não encontrado.");
   await query(`UPDATE ${tabela} SET apagada_em = NULL WHERE id = ?`, [id]);
@@ -614,7 +622,7 @@ export async function atualizarCargo(id: number, form: FormData) {
   const cargo = String(form.get("cargo") ?? "");
   if (!(CARGOS as readonly string[]).includes(cargo)) voltar("erro", "Cargo inválido.");
   await query("UPDATE users SET cargo = ? WHERE id = ?", [cargo, id]);
-  await query("DELETE FROM sessions WHERE user_id = ?", [id]); // obriga a entrar de novo com o cargo novo
+  await terminarSessoes(id); // obriga a entrar de novo com o cargo novo
   await registar(await soAdmin(), null, "utilizador_cargo", { nome: u.nome, cargo });
   revalidatePath("/utilizadores");
   voltar("ok", `Cargo de ${u.nome} atualizado.`);
@@ -624,7 +632,7 @@ export async function alternarAtivo(id: number) {
   const u = await alvo(id);
   const novo = u.ativo ? 0 : 1;
   await query("UPDATE users SET ativo = ? WHERE id = ?", [novo, id]);
-  if (!novo) await query("DELETE FROM sessions WHERE user_id = ?", [id]);
+  if (!novo) await terminarSessoes(id);
   await registar(await soAdmin(), null, novo ? "utilizador_restaurada" : "utilizador_apagada", { nome: u.nome });
   revalidatePath("/", "layout");
   voltar("ok", `${u.nome} ${novo ? "reativado" : "desativado"}.`);
@@ -635,7 +643,7 @@ export async function redefinirSenha(id: number, form: FormData) {
   const senha = String(form.get("senha") ?? "");
   if (senha.length < 10) voltar("erro", "A palavra-passe deve ter pelo menos 10 caracteres.");
   await query("UPDATE users SET password_hash = ? WHERE id = ?", [hashPassword(senha), id]);
-  await query("DELETE FROM sessions WHERE user_id = ?", [id]);
+  await terminarSessoes(id);
   await registar(await soAdmin(), null, "utilizador_senha", { nome: u.nome });
   voltar("ok", `Palavra-passe de ${u.nome} redefinida. Diga-lhe a nova palavra-passe.`);
 }
@@ -676,8 +684,9 @@ export async function enviarContabilidade(form: FormData) {
   const voltar = (tipo: "ok" | "erro", msg: string): never => redirect(`/contabilidade?${paraQuery(filtro)}&${tipo}=${encodeURIComponent(msg)}`);
 
   if (!(await emailConfigurado())) voltar("erro", "O envio por email ainda não está configurado. Use «Descarregar ZIP» ou veja as instruções na página.");
-  const para = String(form.get("para") ?? "").split(/[,;\s]+/).filter(Boolean);
-  if (!para.length || !para.every((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))) voltar("erro", "Escreva um email de destino válido.");
+  const textoPara = String(form.get("para") ?? "");
+  const para = listaEmails(textoPara);
+  if (!para.length || para.length > 5 || para.length < textoPara.split(/[,;\s]+/).filter(Boolean).length) voltar("erro", "Escreva até 5 emails de destino válidos.");
   const faturas = await faturasDoPacote(user, filtro);
   if (!faturas.length) voltar("erro", "Não há faturas para enviar neste período.");
 
@@ -727,8 +736,11 @@ const dataValida = (v: FormDataEntryValue | null) => { const s = String(v ?? "")
 
 async function guardarAnexo(v: FormDataEntryValue | null): Promise<number | null | "erro"> {
   if (!(v instanceof File) || v.size === 0) return null;
-  if (!MIMES.has(v.type) || v.size > MAX_BYTES) return "erro";
-  return (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [v.type, Buffer.from(await v.arrayBuffer())]))!.id;
+  if (v.size > MAX_BYTES) return "erro";
+  const dados = Buffer.from(await v.arrayBuffer());
+  const mime = tipoReal(dados); // pelo conteúdo, não pelo que o browser declara
+  if (!mime) return "erro";
+  return (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [mime, dados]))!.id;
 }
 
 export async function guardarDocumento(id: number | null, form: FormData) {
@@ -879,7 +891,7 @@ export async function guardarServidorEmail(form: FormData) {
   await guardarConfig("smtp_from", from!);
   // A palavra-passe só muda se escrever uma nova (o campo vem sempre vazio, por segurança)
   const pass = String(form.get("pass") ?? "");
-  if (pass) await guardarConfig("smtp_pass", pass);
+  if (pass) await guardarConfig("smtp_pass", cifrar(pass));
   await registar(u, null, "definicoes_email", { resumo: `${host}:${porta} · ${from}` });
   voltarDefinicoes("ok", "Servidor de email guardado. Use «Enviar email de teste» para confirmar.", "email");
 }

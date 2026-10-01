@@ -40,7 +40,7 @@ async function criarDriver(): Promise<Driver> {
   };
 }
 
-const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico", "propostas", "documentos", "alugueres"];
+const TABELAS = ["users", "sessions", "empresas", "predios", "maquinas", "ficheiros", "faturas", "config", "historico", "propostas", "documentos", "alugueres", "login_falhas"];
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -182,6 +182,9 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS alugueres_maquina_idx ON alugueres(maquina_id);
   CREATE INDEX IF NOT EXISTS faturas_maquina_idx ON faturas(maquina_id);
+  -- Tentativas de login falhadas (limite por email+IP e por IP; na base de dados porque há vários servidores)
+  CREATE TABLE IF NOT EXISTS login_falhas (id SERIAL PRIMARY KEY, chave TEXT NOT NULL, quando BIGINT NOT NULL);
+  CREATE INDEX IF NOT EXISTS login_falhas_idx ON login_falhas(chave, quando);
   -- Cargos antigos (por categoria) passam ao mais restrito: o contabilista propõe e um admin aceita.
   UPDATE users SET cargo = 'contabilista' WHERE cargo NOT IN ('admin', 'operador', 'contabilista');
   -- No Supabase, sem RLS as tabelas ficariam legíveis por qualquer pessoa via API pública.

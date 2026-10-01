@@ -45,6 +45,18 @@ Variáveis de ambiente:
 |---|---|
 | `DATABASE_URL` | Ligação Postgres (ex.: Supabase «Transaction pooler»). Obrigatória online. |
 | `FILIPE_PASSWORD`, `LISA_PASSWORD`, `CONTABILIDADE_PASSWORD` | Palavras-passe iniciais. Sem elas, em produção são geradas e escritas no log. |
-| `COOKIE_SECURE=1` | Cookie só por HTTPS (pôr sempre online). |
+| `COOKIE_SECURE=1` | Cookie só por HTTPS (em produção já é sempre assim; serve para forçar noutros ambientes). |
+| `APP_SECRET` | Chave que cifra os segredos guardados na base de dados (palavra-passe do email nas Definições). Se mudar, esses segredos têm de ser escritos de novo. |
+| `CRON_SECRET` | Protege o envio diário de alertas por email (`/api/cron/alertas`). |
 | `ANTHROPIC_API_KEY` | Leitura automática por IA (fornecedor, categoria, artigos). Sem ela o QR fiscal continua a funcionar. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envio de email à contabilidade. Gmail: `smtp.gmail.com`, porta `465`, palavra-passe de aplicação. |
+
+
+## Segurança
+
+- **Sessões:** o cookie é `HttpOnly`, `Secure` e `SameSite`; na base de dados só fica o hash do token. Mudar o cargo, a palavra-passe ou desativar uma pessoa termina as sessões dela.
+- **Login:** máx. 5 tentativas falhadas por email+IP e 25 por IP em 15 minutos (guardadas na base de dados). O tempo de resposta é igual para emails que não existem.
+- **Ficheiros:** só PDF e fotos, validados pelo conteúdo e não pelo tipo que o browser declara; servidos com `nosniff`.
+- **Cabeçalhos:** política de conteúdo (CSP), `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy` e HSTS (ver `next.config.ts`).
+- **Base de dados:** todas as tabelas com RLS ligado e sem políticas (a API pública do Supabase fica bloqueada; a app liga-se com o utilizador da base de dados).
+- **Segredos na base de dados** (palavra-passe do servidor de email) vão cifrados com `APP_SECRET`; nunca saem na cópia de segurança.

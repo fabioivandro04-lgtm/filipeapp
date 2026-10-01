@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { lerConfig } from "./config";
+import { decifrar } from "./segredo";
 
 /**
  * O envio por email precisa de um servidor SMTP (ex.: Gmail com palavra-passe de aplicação).
@@ -13,7 +14,7 @@ export async function lerSmtp(): Promise<Smtp | null> {
   }
   const [host, port, user, pass, from] = await Promise.all(["smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from"].map(lerConfig));
   if (!host || !from) return null;
-  return { host, port: Number(port ?? 587), user, pass, from, origem: "definicoes" };
+  return { host, port: Number(port ?? 587), user, pass: decifrar(pass), from, origem: "definicoes" };
 }
 
 export const emailConfigurado = async () => (await lerSmtp()) !== null;
