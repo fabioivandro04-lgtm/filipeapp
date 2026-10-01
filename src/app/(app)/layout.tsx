@@ -6,7 +6,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <>
       <Nav user={user} />
-      <main className="mx-auto max-w-6xl px-4 pb-28 pt-6 md:pb-10">{children}</main>
+      {/* No computador o conteúdo fica à direita do menu lateral (w-64) */}
+      <div className="md:pl-64">
+        <main className="mx-auto max-w-6xl px-4 pb-28 pt-6 md:px-8 md:pb-10 md:pt-8">{children}</main>
+      </div>
     </>
   );
 }
