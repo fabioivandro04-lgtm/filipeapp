@@ -17,6 +17,7 @@ import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Est
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
+import { fotosParaPdf, imagemConvertivel } from "@/lib/pdf";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -63,17 +64,46 @@ async function obterEmpresaId(nome: string | null): Promise<number | null | "apa
 }
 const MSG_EMPRESA_APAGADA = (n: string) => `A empresa «${n}» foi apagada. Peça a um administrador para a restaurar (Mais → Apagados).`;
 
+export type VerificacaoQr = { duplicada?: { id: number; fornecedor: string | null; numero: string | null }; empresa?: string | null };
+
+/** Logo depois de ler o QR no telemóvel: já existe esta fatura? E de que empresa do grupo é? (antes de enviar) */
+export async function verificarQr(texto: string): Promise<VerificacaoQr> {
+  const u = await requireUser();
+  if (!editaDireto(u)) return {};
+  const qr = lerQrFiscal(texto);
+  if (!qr) return {};
+  const dup = await queryOne<{ id: number; fornecedor: string | null; numero: string | null }>(
+    `SELECT id, fornecedor, numero FROM faturas WHERE apagada_em IS NULL AND ((? NOT IN ('', '0') AND atcud = ?) OR (nif_fornecedor = ? AND numero = ?)) ORDER BY id LIMIT 1`,
+    [qr.atcud ?? "", qr.atcud ?? "", qr.nifEmitente ?? "", qr.numero ?? ""]);
+  const emp = qr.nifAdquirente ? await queryOne<{ nome: string }>("SELECT nome FROM empresas WHERE nif = ? AND apagada_em IS NULL", [qr.nifAdquirente]) : undefined;
+  return { duplicada: dup, empresa: emp?.nome ?? null };
+}
+
 /** Guarda e lê UMA fatura. O browser chama-a uma vez por ficheiro. */
 export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   const user = await requireUser();
   if (!editaDireto(user)) return { erro: "O seu cargo não permite carregar faturas." };
-  const file = form.get("ficheiro");
-  if (!(file instanceof File) || file.size === 0) return { erro: "Ficheiro em falta." };
-  if (!MIMES.has(file.type)) return { erro: `Tipo de ficheiro não suportado: ${file.name}` };
-  if (file.size > MAX_BYTES) return { erro: `${file.name} é demasiado grande (máx. 4 MB). Tente uma foto em vez de PDF.` };
+  // Uma fatura = um ficheiro (PDF ou foto) ou várias fotos («páginas»), que se juntam num só PDF
+  const paginas = form.getAll("pagina").filter((v): v is File => v instanceof File && v.size > 0);
+  const unico = form.get("ficheiro");
+  const ficheiros = paginas.length ? paginas : unico instanceof File && unico.size > 0 ? [unico] : [];
+  if (!ficheiros.length) return { erro: "Ficheiro em falta." };
+  for (const f of ficheiros) if (!MIMES.has(f.type)) return { erro: `Tipo de ficheiro não suportado: ${f.name}` };
+  if (ficheiros.reduce((s, f) => s + f.size, 0) > MAX_BYTES) return { erro: "A fatura é demasiado grande (máx. 4 MB). Tente fotos em vez de PDF, ou menos páginas." };
 
   const categoriaManual = String(form.get("categoria") ?? "");
-  const bytes = Buffer.from(await file.arrayBuffer());
+  // Fotos são guardadas como PDF (com a foto intacta): é o formato que a plataforma da contabilidade lê, QR incluído
+  let file: { type: string } = ficheiros[0];
+  let bytes = Buffer.from(await ficheiros[0].arrayBuffer());
+  let paraLer = { bytes, mime: ficheiros[0].type }; // o que a leitura automática recebe
+  if (ficheiros.every((f) => imagemConvertivel(f.type))) {
+    const imagens = await Promise.all(ficheiros.map(async (f) => ({ bytes: new Uint8Array(await f.arrayBuffer()), mime: f.type })));
+    try {
+      bytes = Buffer.from(await fotosParaPdf(imagens));
+      file = { type: "application/pdf" };
+      paraLer = ficheiros.length === 1 ? { bytes: Buffer.from(imagens[0].bytes), mime: imagens[0].mime } : { bytes, mime: "application/pdf" };
+    } catch { /* se a conversão falhar, guarda a foto como veio */ }
+  } else if (ficheiros.length > 1) return { erro: "Várias páginas só com fotos (JPEG/PNG)." };
   const nomeEmpresa = String(form.get("empresa") ?? "").trim() || null;
   let empresaId = await obterEmpresaId(nomeEmpresa);
   if (empresaId === "apagada") return { erro: MSG_EMPRESA_APAGADA(nomeEmpresa!) };
@@ -82,7 +112,7 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
 
   let d: FaturaExtraida | null = null;
   if (extracaoDisponivel()) {
-    try { d = await extrairFatura(bytes, file.type); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
+    try { d = await extrairFatura(paraLer.bytes, paraLer.mime); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
   } else if (!qr) {
     notas.push("Sem leitura automática (falta ANTHROPIC_API_KEY): preencha os dados à mão.");
   }

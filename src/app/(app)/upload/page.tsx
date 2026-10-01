@@ -1,118 +1,260 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { carregarFatura } from "@/app/actions";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { carregarFatura, verificarQr, type VerificacaoQr } from "@/app/actions";
 import { CATEGORIAS } from "@/lib/categorias";
 import { lerQrDoFicheiro } from "@/lib/qr-cliente";
+import { lerQrFiscal, type QrFatura } from "@/lib/qr";
+import { tirarCapturas } from "@/lib/capturas";
+import { dataPt, money } from "@/lib/format";
 import { PageHeader } from "@/components/Ui";
+import Icone from "@/components/Icone";
 
-const ALVO_BYTES = 3.2 * 1024 * 1024; // abaixo do limite de 4,5 MB da Vercel, com folga para o resto do pedido
+const LIMITE_BYTES = 3.2 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
 
-/** Reduz fotos grandes do telemóvel e converte formatos como HEIC (iPhone) para JPEG. */
-async function comprimir(file: File): Promise<File> {
-  if (file.type === "application/pdf" || file.type === "image/gif") return file;
-  if (!file.type.startsWith("image/") && !/\.(jpe?g|png|webp|heic|heif)$/i.test(file.name)) return file;
+/** Foto → JPEG com o tamanho pedido (converte HEIC/WebP; mantém resolução suficiente para o QR ficar nítido). */
+async function paraJpeg(file: File, alvo: number): Promise<File> {
+  if (file.type === "application/pdf") return file;
+  if ((file.type === "image/jpeg" || file.type === "image/png") && file.size <= alvo) return file;
   try {
     const bmp = await createImageBitmap(file);
     let melhor: Blob | null = null;
-    // Tenta tamanhos e qualidades cada vez mais baixos até caber
-    for (const [lado, qualidade] of [[2200, 0.85], [1800, 0.78], [1400, 0.7], [1100, 0.65]]) {
-      const escala = Math.min(1, lado / Math.max(bmp.width, bmp.height));
+    for (const [lado, qualidade] of [[2400, 0.86], [2000, 0.8], [1600, 0.74], [1300, 0.68]]) {
+      const esc = Math.min(1, lado / Math.max(bmp.width, bmp.height));
       const canvas = document.createElement("canvas");
-      canvas.width = Math.round(bmp.width * escala);
-      canvas.height = Math.round(bmp.height * escala);
-      canvas.getContext("2d")!.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      canvas.width = Math.round(bmp.width * esc);
+      canvas.height = Math.round(bmp.height * esc);
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
       const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", qualidade));
       if (blob) melhor = blob;
-      if (blob && blob.size <= ALVO_BYTES) break;
+      if (blob && blob.size <= alvo) break;
     }
-    if (!melhor) return file;
-    const formatoAceite = ["image/jpeg", "image/png", "image/webp"].includes(file.type);
-    if (formatoAceite && file.size <= ALVO_BYTES && melhor.size >= file.size) return file; // já é pequena
-    return new File([melhor], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" });
+    return melhor ? new File([melhor], file.name.replace(/\.\w+$/, "") + ".jpg", { type: "image/jpeg" }) : file;
   } catch {
     return file;
   }
 }
 
-export default function Upload() {
-  const router = useRouter();
-  const [files, setFiles] = useState<File[]>([]);
-  const [estado, setEstado] = useState<string | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const ocupado = estado !== null;
+type Estado = "a-ler" | "qr" | "sem-qr" | "a-enviar" | "enviada" | "erro";
+type Item = {
+  id: number; paginas: File[]; previews: string[]; pdf: boolean; estado: Estado;
+  qrTexto: string | null; qr: QrFatura | null; verif: VerificacaoQr | null; forcar: boolean; faturaId?: number; erro?: string;
+};
+let seq = 0;
 
-  const adicionar = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
-    e.target.value = "";
-  };
+export default function Capturar() {
+  const [itens, setItens] = useState<Item[]>([]);
+  const [aEnviar, setAEnviar] = useState(false);
+  const [empresa, setEmpresa] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const itensRef = useRef(itens);
+  useEffect(() => { itensRef.current = itens; }, [itens]);
 
-  async function enviar(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setErro(null);
-    const fd0 = new FormData(e.currentTarget);
-    const ids: number[] = [];
-    try {
-      for (let i = 0; i < files.length; i++) {
-        setEstado(`A ler a fatura ${i + 1} de ${files.length}… pode demorar`);
-        const fd = new FormData();
-        fd.set("empresa", String(fd0.get("empresa") ?? ""));
-        fd.set("categoria", String(fd0.get("categoria") ?? ""));
-        fd.set("qr", (await lerQrDoFicheiro(files[i])) ?? ""); // QR fiscal, lido no original (antes de comprimir)
-        fd.set("ficheiro", await comprimir(files[i]));
-        const r = await carregarFatura(fd);
-        if (r.erro) { setErro(r.erro); setEstado(null); return; }
-        ids.push(r.id!);
-      }
-    } catch {
-      setErro("Não foi possível enviar. Verifique a ligação e tente novamente (ou use uma foto mais pequena).");
-      setEstado(null);
-      return;
-    }
-    router.push(ids.length === 1 ? `/faturas/${ids[0]}` : "/");
-    router.refresh();
+  const atualizar = (id: number, m: Partial<Item>) => setItens((l) => l.map((i) => (i.id === id ? { ...i, ...m } : i)));
+
+  /** Procura o QR fiscal nas páginas (no original, antes de comprimir) e verifica se a fatura já existe. */
+  async function analisar(id: number, paginas: File[]) {
+    atualizar(id, { estado: "a-ler" });
+    let texto: string | null = null;
+    for (const p of paginas) { texto = await lerQrDoFicheiro(p); if (texto) break; }
+    const qr = lerQrFiscal(texto);
+    let verif: VerificacaoQr | null = null;
+    if (texto) { try { verif = await verificarQr(texto); } catch { verif = null; } }
+    atualizar(id, { estado: qr ? "qr" : "sem-qr", qrTexto: texto, qr, verif });
   }
 
+  /** Cada foto ou PDF escolhido é uma fatura nova. */
+  function novasFaturas(files: File[]) {
+    const novos = files.map((f): Item => {
+      const pdf = f.type === "application/pdf";
+      return { id: ++seq, paginas: [f], previews: pdf ? [] : [URL.createObjectURL(f)], pdf, estado: "a-ler", qrTexto: null, qr: null, verif: null, forcar: false };
+    });
+    setItens((l) => [...l, ...novos]);
+    for (const n of novos) void analisar(n.id, n.paginas);
+  }
+
+  function juntarPagina(id: number, files: File[], substituir = false) {
+    const atual = itensRef.current.find((i) => i.id === id);
+    if (!atual || !files.length) return;
+    if (substituir) atual.previews.forEach((u) => URL.revokeObjectURL(u));
+    const paginas = substituir ? files : [...atual.paginas, ...files];
+    const previews = [...(substituir ? [] : atual.previews), ...files.map((f) => URL.createObjectURL(f))];
+    atualizar(id, { paginas, previews, forcar: false });
+    void analisar(id, paginas);
+  }
+
+  function remover(id: number) {
+    itensRef.current.find((i) => i.id === id)?.previews.forEach((u) => URL.revokeObjectURL(u));
+    setItens((l) => l.filter((i) => i.id !== id));
+  }
+
+  // Fotos tiradas no botão «Capturar» da barra de baixo (agora ou já com este ecrã aberto)
+  useEffect(() => {
+    const buscar = () => { const f = tirarCapturas(); if (f.length) novasFaturas(f); };
+    queueMicrotask(buscar);
+    window.addEventListener("capturas", buscar);
+    return () => window.removeEventListener("capturas", buscar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const prontas = itens.filter((i) => ["qr", "sem-qr", "erro"].includes(i.estado) && (!i.verif?.duplicada || i.forcar));
+  const aLer = itens.some((i) => i.estado === "a-ler");
+
+  async function enviarTodas() {
+    setAEnviar(true);
+    for (const it of prontas) {
+      atualizar(it.id, { estado: "a-enviar", erro: undefined });
+      try {
+        const fd = new FormData();
+        fd.set("empresa", empresa);
+        fd.set("categoria", categoria);
+        fd.set("qr", it.qrTexto ?? "");
+        if (it.pdf) fd.set("ficheiro", it.paginas[0]);
+        else {
+          const alvo = Math.min(1.8 * 1024 * 1024, LIMITE_BYTES / it.paginas.length);
+          for (const p of it.paginas) fd.append("pagina", await paraJpeg(p, alvo));
+        }
+        const r = await carregarFatura(fd);
+        atualizar(it.id, r.erro ? { estado: "erro", erro: r.erro } : { estado: "enviada", faturaId: r.id });
+      } catch {
+        atualizar(it.id, { estado: "erro", erro: "Não foi possível enviar. Verifique a ligação e tente outra vez." });
+      }
+    }
+    setAEnviar(false);
+  }
+
+  const enviadas = itens.filter((i) => i.estado === "enviada");
+  const tudoEnviado = itens.length > 0 && enviadas.length === itens.length;
+
   return (
-    <div className="mx-auto max-w-xl">
-      <PageHeader titulo="Carregar faturas" subtitulo="Tire uma foto ou escolha ficheiros. A app lê o QR code fiscal e os dados sozinha." />
-      <form onSubmit={enviar} className="card space-y-5 p-5">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="btn-primary cursor-pointer py-4">
-            Tirar foto
-            <input type="file" accept="image/*" capture="environment" onChange={adicionar} disabled={ocupado} className="sr-only" />
+    <div className="mx-auto max-w-2xl">
+      <PageHeader titulo="Capturar faturas" subtitulo="Uma fatura de cada vez. A app lê o QR code fiscal logo após a foto e guarda tudo em PDF, pronto para a contabilidade." />
+
+      {!tudoEnviado && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <label className="btn-primary cursor-pointer py-4 text-base">
+            <Icone nome="camara" className="h-5 w-5" />Tirar foto
+            <input type="file" accept="image/*" capture="environment" disabled={aEnviar} className="sr-only"
+              onChange={(e) => { novasFaturas(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
           </label>
-          <label className="btn-ghost cursor-pointer py-4">
-            Escolher ficheiros
-            <input type="file" multiple accept="image/*,application/pdf" onChange={adicionar} disabled={ocupado} className="sr-only" />
+          <label className="btn-ghost cursor-pointer py-4 text-base">
+            <Icone nome="faturas" className="h-5 w-5" />Escolher ficheiros (PDF ou fotos)
+            <input type="file" multiple accept="image/*,application/pdf" disabled={aEnviar} className="sr-only"
+              onChange={(e) => { novasFaturas(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
           </label>
         </div>
+      )}
 
-        {files.length > 0 ? (
-          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 text-sm">
-            {files.map((f, i) => (
-              <li key={i} className="flex items-center justify-between gap-2 px-3 py-2">
-                <span className="truncate">{f.name}</span>
-                {!ocupado && <button type="button" onClick={() => setFiles(files.filter((_, k) => k !== i))} className="text-xs text-slate-500 hover:text-red-600">Remover</button>}
-              </li>
-            ))}
+      {!itens.length && (
+        <div className="card p-5 text-sm text-slate-600">
+          <p className="mb-2 font-medium text-slate-900">Para a foto sair bem</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>Fatura inteira na foto, em cima de uma superfície lisa e com boa luz (sem sombra do telemóvel).</li>
+            <li>O QR code tem de ficar nítido: é dele que saem o NIF, o número, a data e o total, sem erros.</li>
+            <li>Fatura com várias folhas? Tire a primeira e use «+ Página» para juntar as outras.</li>
           </ul>
-        ) : <p className="text-center text-sm text-slate-500">Nenhum ficheiro selecionado</p>}
+        </div>
+      )}
 
-        <div>
-          <label className="label">Empresa (opcional)</label>
-          <input name="empresa" placeholder="Ex.: Filipe Lda" className="field" />
+      <ul className="space-y-3">
+        {itens.map((it, n) => (
+          <li key={it.id} className="card p-4">
+            <div className="flex gap-3">
+              <div className="flex shrink-0 gap-1.5">
+                {it.pdf
+                  ? <span className="grid h-20 w-16 place-items-center rounded-lg bg-slate-100 text-xs font-semibold text-slate-500">PDF</span>
+                  // eslint-disable-next-line @next/next/no-img-element
+                  : it.previews.slice(0, 3).map((u, k) => <img key={k} src={u} alt={`Página ${k + 1}`} className="h-20 w-16 rounded-lg border border-slate-200 object-cover" />)}
+                {it.previews.length > 3 && <span className="grid h-20 w-10 place-items-center rounded-lg bg-slate-100 text-xs text-slate-500">+{it.previews.length - 3}</span>}
+              </div>
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-medium">Fatura {n + 1}{!it.pdf && it.paginas.length > 1 ? ` · ${it.paginas.length} páginas` : ""}</p>
+                <Situacao it={it} />
+              </div>
+            </div>
+
+            {it.verif?.duplicada && it.estado !== "enviada" && (
+              <div className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-800">
+                Esta fatura já foi carregada: <Link href={`/faturas/${it.verif.duplicada.id}`} className="font-medium underline">{it.verif.duplicada.fornecedor ?? "ver fatura"} {it.verif.duplicada.numero ?? ""}</Link>.
+                <label className="mt-2 flex items-center gap-2"><input type="checkbox" checked={it.forcar} onChange={(e) => atualizar(it.id, { forcar: e.target.checked })} className="h-4 w-4" />Carregar mesmo assim</label>
+              </div>
+            )}
+
+            {!["a-enviar", "enviada"].includes(it.estado) && !aEnviar && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {!it.pdf && (
+                  <label className="btn-ghost cursor-pointer px-3 py-1.5 text-xs">
+                    + Página
+                    <input type="file" accept="image/*" capture="environment" className="sr-only"
+                      onChange={(e) => { juntarPagina(it.id, Array.from(e.target.files ?? [])); e.target.value = ""; }} />
+                  </label>
+                )}
+                {it.estado === "sem-qr" && !it.pdf && (
+                  <label className="btn-ghost cursor-pointer px-3 py-1.5 text-xs">
+                    Tirar outra vez
+                    <input type="file" accept="image/*" capture="environment" className="sr-only"
+                      onChange={(e) => { juntarPagina(it.id, Array.from(e.target.files ?? []), true); e.target.value = ""; }} />
+                  </label>
+                )}
+                <button type="button" onClick={() => remover(it.id)} className="btn-ghost px-3 py-1.5 text-xs text-red-600">Remover</button>
+              </div>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      {itens.length > 0 && !tudoEnviado && (
+        <div className="card mt-4 space-y-4 p-4">
+          <details>
+            <summary className="cursor-pointer text-sm font-medium text-slate-600">Opções (empresa e categoria)</summary>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div><label className="label">Empresa</label>
+                <input value={empresa} onChange={(e) => setEmpresa(e.target.value)} placeholder="Automática pelo NIF do QR" className="field" /></div>
+              <div><label className="label">Categoria</label>
+                <select value={categoria} onChange={(e) => setCategoria(e.target.value)} className="field">
+                  <option value="">Detetar automaticamente</option>
+                  {CATEGORIAS.map(([v, nome]) => <option key={v} value={v}>{nome}</option>)}
+                </select></div>
+            </div>
+          </details>
+          <button type="button" onClick={enviarTodas} disabled={aEnviar || aLer || !prontas.length} className="btn-primary w-full py-3 text-base">
+            {aEnviar ? "A enviar…" : aLer ? "A ler o QR code…" : !prontas.length ? "Nada para enviar (já carregada)" : `Enviar ${prontas.length} fatura${prontas.length === 1 ? "" : "s"}`}
+          </button>
         </div>
-        <div>
-          <label className="label">Categoria</label>
-          <select name="categoria" className="field">
-            <option value="">Detetar automaticamente</option>
-            {CATEGORIAS.map(([v, nome]) => <option key={v} value={v}>{nome}</option>)}
-          </select>
+      )}
+
+      {tudoEnviado && (
+        <div className="card mt-4 flex flex-wrap items-center justify-between gap-3 p-4">
+          <p className="text-sm font-medium text-emerald-800">{enviadas.length} fatura{enviadas.length === 1 ? "" : "s"} guardada{enviadas.length === 1 ? "" : "s"}.</p>
+          <div className="flex gap-2">
+            <Link href="/" className="btn-ghost">Ver faturas</Link>
+            <button type="button" onClick={() => { itens.forEach((i) => i.previews.forEach((u) => URL.revokeObjectURL(u))); setItens([]); }} className="btn-primary">Capturar outra</button>
+          </div>
         </div>
-        {erro && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{erro}</p>}
-        <button disabled={ocupado || !files.length} className="btn-primary w-full">{estado ?? "Enviar"}</button>
-      </form>
+      )}
     </div>
+  );
+}
+
+function Situacao({ it }: { it: Item }) {
+  if (it.estado === "a-ler") return <p className="text-slate-500">A procurar o QR code…</p>;
+  if (it.estado === "a-enviar") return <p className="text-slate-500">A enviar e a ler os dados…</p>;
+  if (it.estado === "enviada") return <p className="text-emerald-700">Guardada. <Link href={`/faturas/${it.faturaId}`} className="font-medium underline">Abrir e confirmar</Link></p>;
+  const q = it.qr;
+  return (
+    <>
+      {q ? (
+        <>
+          <p className="text-emerald-700">QR fiscal lido</p>
+          <p className="text-slate-600">NIF {q.nifEmitente}{q.numero ? ` · ${q.numero}` : ""}{q.data ? ` · ${dataPt(q.data)}` : ""}{q.total != null ? ` · ${money(q.total)}` : ""}</p>
+          {q.nifAdquirente && <p className="text-slate-500">Cliente: {it.verif?.empresa ?? `NIF ${q.nifAdquirente} (ainda sem empresa associada)`}</p>}
+        </>
+      ) : (
+        <p className="text-amber-700">QR code não encontrado. Tire outra foto mais perto do QR, com boa luz, ou envie assim (os dados são lidos do texto).</p>
+      )}
+      {it.estado === "erro" && <p className="mt-1 text-red-700">{it.erro}</p>}
+    </>
   );
 }

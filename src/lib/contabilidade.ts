@@ -1,4 +1,5 @@
 import { query, queryOne } from "./db";
+import { fotosParaPdf, imagemConvertivel } from "./pdf";
 import type { User } from "./auth";
 import { listarFaturas } from "./queries";
 
@@ -26,9 +27,15 @@ export const paraQuery = (f: FiltroPacote) => `mes=${f.mes}&empresa=${f.empresaI
 export const faturasDoPacote = (u: User, f: FiltroPacote) =>
   listarFaturas(u, { mes: f.mes, empresa_id: f.empresaId, pendentesEnvio: f.estado === "pendentes", limite: 2000 });
 
+/** Documento para enviar à contabilidade. Fotos (JPEG/PNG) seguem como PDF: é o formato que os programas de contabilidade leem (QR incluído). */
 export const carregarFicheiro = async (id: number) => {
   const r = await queryOne<{ mime: string; dados: Uint8Array }>("SELECT mime, dados FROM ficheiros WHERE id = ?", [id]);
-  return r ? { mime: r.mime, dados: new Uint8Array(r.dados) } : undefined;
+  if (!r) return undefined;
+  const dados = new Uint8Array(r.dados);
+  if (imagemConvertivel(r.mime)) {
+    try { return { mime: "application/pdf", dados: await fotosParaPdf([{ bytes: dados, mime: r.mime }]) }; } catch { /* imagem estranha: segue como está */ }
+  }
+  return { mime: r.mime, dados };
 };
 
 export async function marcarComoEnviadas(ids: number[]) {

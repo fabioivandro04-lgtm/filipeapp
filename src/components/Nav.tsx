@@ -5,6 +5,7 @@ import { seccoes } from "@/lib/menu";
 import { sair } from "@/app/actions";
 import Icone from "./Icone";
 import MenuLateral from "./MenuLateral";
+import BotaoCapturar from "./BotaoCapturar";
 
 export default async function Nav({ user }: { user: User }) {
   const [pendentes, prazos] = await Promise.all([
@@ -13,11 +14,12 @@ export default async function Nav({ user }: { user: User }) {
   ]);
   const carrega = editaDireto(user);
   const menu = seccoes(user, { pendentes, prazos });
+  // Barra do telemóvel: o botão «Capturar» fica ao centro, em destaque
   const barra = [
     { href: "/", nome: "Faturas", icon: "faturas" },
-    carrega ? { href: "/upload", nome: "Carregar", icon: "camara" } : { href: "/relatorios", nome: "Relatórios", icon: "relatorios" },
-    { href: "/predios", nome: "Prédios", icon: "predios" },
     { href: "/maquinas", nome: "Máquinas", icon: "maquinas" },
+    null,
+    { href: "/predios", nome: "Prédios", icon: "predios" },
     { href: "/mais", nome: pendentes + prazos ? `Mais (${pendentes + prazos})` : "Mais", icon: "menu" },
   ];
   return (
@@ -41,11 +43,13 @@ export default async function Nav({ user }: { user: User }) {
         </div>
       </header>
       <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
-        {barra.map((l) => (
-          <Link key={l.href} href={l.href} className="flex flex-col items-center gap-0.5 py-2 text-xs text-slate-600">
-            <Icone nome={l.icon} className="h-6 w-6" />{l.nome}
-          </Link>
-        ))}
+        {barra.map((l) => l === null
+          ? (carrega ? <BotaoCapturar key="capturar" /> : <Link key="rel" href="/relatorios" className="flex flex-col items-center gap-0.5 py-2 text-xs text-slate-600"><Icone nome="relatorios" className="h-6 w-6" />Relatórios</Link>)
+          : (
+            <Link key={l.href} href={l.href} className="flex flex-col items-center gap-0.5 py-2 text-xs text-slate-600">
+              <Icone nome={l.icon} className="h-6 w-6" />{l.nome}
+            </Link>
+          ))}
       </nav>
     </>
   );

@@ -5,7 +5,7 @@ export type ItemMenu = { href: string; nome: string; desc: string; icon: string;
 export type Seccao = { titulo: string; itens: ItemMenu[] };
 
 /** Atalhos da barra de baixo no telemóvel (as restantes páginas ficam em «Mais»). */
-export const BARRA_TELEMOVEL = ["/", "/predios", "/maquinas"];
+export const BARRA_TELEMOVEL = ["/", "/predios", "/maquinas"]; // + «Capturar» ao centro
 
 /** Todas as páginas, agrupadas, conforme o cargo. Usado no menu lateral (computador) e em «Mais» (telemóvel). */
 export function seccoes(u: User, c: { pendentes?: number; prazos?: number } = {}): Seccao[] {

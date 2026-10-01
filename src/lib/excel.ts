@@ -2,6 +2,8 @@ import ExcelJS from "exceljs";
 import type { FaturaRow } from "./queries";
 
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "application/pdf": "pdf" };
+/** As fotos são enviadas à contabilidade convertidas em PDF (ver carregarFicheiro). */
+const mimeEnviado = (m: string | null) => (m === "image/jpeg" || m === "image/png" ? "application/pdf" : m);
 export const extensao = (mime: string | null) => EXT[mime ?? ""] ?? "bin";
 
 const slug = (t: string | null) =>
@@ -9,7 +11,7 @@ const slug = (t: string | null) =>
 
 /** Nome claro para o ficheiro original: data_fornecedor_nº_#id.ext */
 export function nomeFicheiro(f: Pick<FaturaRow, "id" | "data" | "fornecedor" | "numero" | "ficheiro_mime">) {
-  return [f.data ?? "sem-data", slug(f.fornecedor) || "sem-fornecedor", slug(f.numero), `id${f.id}`].filter(Boolean).join("_") + "." + extensao(f.ficheiro_mime);
+  return [f.data ?? "sem-data", slug(f.fornecedor) || "sem-fornecedor", slug(f.numero), `id${f.id}`].filter(Boolean).join("_") + "." + extensao(mimeEnviado(f.ficheiro_mime));
 }
 
 /** Folha de Excel para a contabilidade. Os totais e o IVA são números (não texto), para somar. */
