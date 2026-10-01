@@ -5,6 +5,7 @@ import { FREQUENCIAS, TIPOS_ALERTA, lerDefinicoesAlertas, type TipoAlerta } from
 import { dataHoraPt } from "@/lib/format";
 import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
 import FormSenha from "@/components/FormSenha";
+import MenuDefinicoes from "@/components/MenuDefinicoes";
 import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
 import Link from "next/link";
@@ -37,16 +38,14 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
   ];
 
   return (
-    <div className="max-w-3xl">
+    <div>
       <PageHeader titulo="Definições" subtitulo={admin ? "O seu perfil e as definições da app." : "O seu perfil e a sua palavra-passe."} />
       {sp.ok && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{sp.ok}</p>}
       {sp.erro && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-700">{sp.erro}</p>}
 
-      <nav className="mb-6 flex gap-2 overflow-x-auto pb-1">
-        {abas.map((a) => <a key={a.id} href={`#${a.id}`} className="shrink-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 hover:border-brand-500 hover:text-brand-700">{a.nome}</a>)}
-      </nav>
-
-      <div className="space-y-6">
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_14rem] lg:gap-8">
+      <MenuDefinicoes abas={abas} />
+      <div className="space-y-6 lg:order-first">
         <Seccao id="perfil" titulo="Perfil">
           <form action={guardarPerfil} className="grid gap-3 sm:grid-cols-2">
             <div><label className="label">Nome</label><input name="nome" defaultValue={user.nome} required maxLength={80} className="field" /></div>
@@ -144,6 +143,7 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
             </ul>
           </Seccao>
         )}
+      </div>
       </div>
     </div>
   );
