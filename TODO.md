@@ -20,6 +20,15 @@ Caixa de perguntas dentro da app, ex.: «Que máquinas da Indico estão paradas 
 - **Alugueres:** contratos, calendário de disponibilidade, faturação mensal ligada ao programa certificado (só se o aluguer for um negócio ativo).
 - **Manutenção por horas** com aviso; **conciliação bancária**; **cruzamento com o e-Fatura**.
 
+### Mover os ficheiros das faturas para o Supabase Storage (decidido, fazer mais tarde)
+Hoje os PDFs/fotos ficam na base de dados (~1 MB cada); o Pro inclui 8 GB, que a 700–2000 faturas/mês dura 4–12 meses. No Storage (100 GB incluídos no Pro) duram vários anos.
+
+- **Fazer:** (1) guardar ficheiros no Storage (bucket privado, servidos pela app após validar o cargo); (2) migrar os ficheiros existentes; (3) comprimir fotos à captura sem perder a leitura do QR; (4) ajustar pacote da contabilidade, apagados, anexos de documentos; (5) incluir os ficheiros na cópia de segurança manual (as cópias diárias do Pro só cobrem a base de dados); (6) verificação periódica de ficheiros órfãos / faturas sem ficheiro.
+- **Precisa de:** chave de serviço do Supabase na Vercel (só servidor).
+- **Custo estimado:** Supabase Pro ≈ 25 US$/mês + Vercel Pro ≈ 20 US$/mês, sem extras de disco.
+- **Antes disso:** passar o Supabase a Pro antes de carregar faturas a sério (o Free tem 500 MB e sem cópias automáticas).
+- **Opcional:** aviso na app quando a base de dados passar de 70% do limite.
+
 ## Pendente (configuração e dados)
 - [ ] Mudar a palavra-passe da base de dados do Supabase (foi escrita numa conversa) e atualizar `DATABASE_URL` na Vercel.
 - [ ] Confirmar que o Filipe, a Lisa e a Laura mudaram as palavras-passe iniciais (Definições).
