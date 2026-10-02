@@ -11,6 +11,13 @@ Caixa de perguntas dentro da app, ex.: «Que máquinas da Indico estão paradas 
 - **Limitação:** a qualidade depende dos dados. Hoje há as 603 máquinas mas quase nenhuma fatura nem aluguer; no início funcionam bem as perguntas de stock e prazos, as de custos e rentabilidade só depois de as faturas e os alugueres estarem carregados e ligados às máquinas.
 - **Fases:** (1) página «Perguntar» + ~10 consultas + permissões; (2) tabelas, ligações e exportar para Excel; (3) ditar no telemóvel e avisos («avisa-me quando…»).
 
+### Próximas melhorias (escolhidas; ordem de prioridade)
+1. **Stock parado e anúncios** (o que mais mexe com dinheiro): hoje 200 máquinas há mais de 1 ano ≈ 1,63 M€ em valor de compra. Lista «a vender», alerta aos 12 meses, anúncios prontos (texto, ficha, fotos).
+2. **Leitura automática de faturas com IA** (sem QR ou com QR ilegível): fornecedor, NIF, valor, IVA, data. Precisa de `ANTHROPIC_API_KEY` na Vercel.
+3. **Aviso de espaço da base de dados** (ex.: acima de 70% do limite) e **verificação periódica da cópia de segurança**.
+4. **Margem real por máquina vendida** (precisa de registar o valor de venda).
+5. **Gastos por fornecedor:** subidas de preço e duplicados.
+
 ### Outras ideias já discutidas
 - **Stock parado e anúncios:** lista «a vender» por tempo parado (hoje 200 de 302 máquinas há mais de 1 ano ≈ 1,63 M€ em valor de compra), alerta aos 12 meses, anúncios prontos (texto, ficha, fotos), preço sugerido pelo histórico.
 - **Margem real por máquina vendida:** precisa de as empresas registarem o **valor de venda** (hoje os ficheiros de stock não o têm).
