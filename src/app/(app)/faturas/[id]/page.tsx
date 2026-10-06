@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, opcoesMaquinas, todosPredios } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/categorias";
 import { money } from "@/lib/format";
-import { aceitarProposta, apagarFatura, guardarFatura, rejeitarProposta } from "@/app/actions";
+import { aceitarProposta, apagarFatura, guardarFatura, lerOutraVez, rejeitarProposta } from "@/app/actions";
 import { editaDireto } from "@/lib/auth";
 import ConfirmarBotao from "@/components/ConfirmarBotao";
 import DiffLista from "@/components/Diff";
@@ -68,6 +68,9 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
 
       {f.leitura === "pendente" && <p className="mb-4 rounded-xl bg-slate-100 p-3 text-sm text-slate-700">A ler os dados da fatura… vão aparecer aqui dentro de instantes (pode preencher à mão, se preferir).</p>}
       {f.leitura === "ia" && !f.revisada && !f.alerta && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Dados lidos por IA: confira com a imagem ao lado e marque «revista».</p>}
+      {direto && f.leitura !== "pendente" && f.leitura !== "qr" && (
+        <form action={lerOutraVez.bind(null, f.id)} className="mb-4"><button className="btn-ghost px-3 py-1.5 text-sm">Ler outra vez com IA</button></form>
+      )}
       {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{f.alerta}</p>}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">

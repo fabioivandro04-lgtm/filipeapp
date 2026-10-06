@@ -20,7 +20,7 @@ import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extracaoDisponivel, type Pagina } from "@/lib/extract";
 import { avisosFatura, completarComIa } from "@/lib/leitura-ia";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
-import { fotosParaPdf, imagemConvertivel } from "@/lib/pdf";
+import { fotosParaPdf, imagemConvertivel, jpegsDoPdf } from "@/lib/pdf";
 import { tipoReal } from "@/lib/ficheiros";
 import { cifrar } from "@/lib/segredo";
 
@@ -102,11 +102,20 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   }
   if (ficheiros.reduce((s, f) => s + f.size, 0) > MAX_BYTES) return { erro: "A fatura é demasiado grande (máx. 4 MB). Tente fotos em vez de PDF, ou menos páginas." };
 
+  // Cópia reduzida das fotos só para a IA (menos para enviar e mais rápido a ler); a fatura guardada é a original
+  const reduzidas: Pagina[] = [];
+  for (const f of form.getAll("leitura")) {
+    if (!(f instanceof File) || f.size === 0 || f.size > 1024 * 1024) continue;
+    const dados = Buffer.from(await f.arrayBuffer());
+    const mime = tipoReal(dados);
+    if (mime === "image/jpeg" || mime === "image/png") reduzidas.push({ bytes: dados, mime });
+  }
+
   const categoriaManual = String(form.get("categoria") ?? "");
   // Fotos são guardadas como PDF (com a foto intacta): é o formato que a plataforma da contabilidade lê, QR incluído
   let file: { type: string } = { type: reais[0].mime };
   let bytes = reais[0].dados;
-  const paraLer: Pagina[] = reais.map((r) => ({ bytes: r.dados, mime: r.mime })); // o que a leitura automática recebe (fotos soltas, nunca o PDF montado)
+  const paraLer: Pagina[] = reduzidas.length === reais.length ? reduzidas : reais.map((r) => ({ bytes: r.dados, mime: r.mime })); // o que a IA recebe (fotos soltas, nunca o PDF montado)
   if (reais.every((r) => imagemConvertivel(r.mime))) {
     const imagens = reais.map((r) => ({ bytes: new Uint8Array(r.dados), mime: r.mime }));
     try {
@@ -159,6 +168,27 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   await registar(user, nova.id, "criada", { fornecedor, numero: qr?.numero ?? null, total: qr?.total ?? null, qr: !!qr, ia });
   revalidatePath("/", "layout");
   return { id: nova.id };
+}
+
+/** Volta a ler uma fatura com IA (por exemplo, quando a primeira tentativa falhou). Só preenche o que está vazio. */
+export async function lerOutraVez(id: number) {
+  const user = await requireUser();
+  if (!editaDireto(user)) return;
+  const f = await queryOne<{ ficheiro_id: number | null }>("SELECT ficheiro_id FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  const volta = (tipo: "ok" | "erro", msg: string): never => redirect(`/faturas/${id}?${tipo}=${encodeURIComponent(msg)}`);
+  if (!f?.ficheiro_id) volta("erro", "Esta fatura não tem ficheiro para ler.");
+  if (!extracaoDisponivel()) volta("erro", "A leitura por IA não está configurada.");
+  const fich = await queryOne<{ mime: string; dados: Uint8Array }>("SELECT mime, dados FROM ficheiros WHERE id = ?", [f!.ficheiro_id]);
+  if (!fich) volta("erro", "Ficheiro não encontrado.");
+  let paginas: Pagina[] = [{ bytes: Buffer.from(fich!.dados), mime: fich!.mime }];
+  if (fich!.mime === "application/pdf") {
+    // PDF feito a partir de fotos: lê as fotos (a IA lê imagens melhor do que PDFs sem texto)
+    try { const j = await jpegsDoPdf(fich!.dados); if (j.length) paginas = j.map((b) => ({ bytes: Buffer.from(b), mime: "image/jpeg" })); } catch { /* fica o PDF */ }
+  }
+  await query("UPDATE faturas SET leitura = 'pendente' WHERE id = ?", [id]);
+  after(() => completarComIa(id, paginas).catch(() => query("UPDATE faturas SET leitura = 'falhou' WHERE id = ? AND leitura = 'pendente'", [id])));
+  revalidatePath("/", "layout");
+  volta("ok", "A ler a fatura outra vez… os dados aparecem dentro de instantes.");
 }
 
 const num = (v: FormDataEntryValue | null) => {

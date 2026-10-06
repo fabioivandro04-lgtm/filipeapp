@@ -1,4 +1,4 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
 
 // A4 em pontos PDF; margem pequena para a fatura ocupar quase a página toda (o QR fica maior e mais legível)
 const A4 = { w: 595.28, h: 841.89 };
@@ -25,4 +25,16 @@ export async function fotosParaPdf(imagens: Imagem[], titulo = "Fatura"): Promis
     pdf.addPage([pw, ph]).drawImage(emb, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
   }
   return pdf.save();
+}
+
+/** Fotos JPEG incorporadas num PDF nosso (uma por página), para voltar a ler uma fatura fotografada com IA. */
+export async function jpegsDoPdf(bytes: Uint8Array, max = 3): Promise<Uint8Array[]> {
+  const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  const fotos: Uint8Array[] = [];
+  for (const [, obj] of doc.context.enumerateIndirectObjects()) {
+    if (fotos.length >= max) break;
+    if (obj instanceof PDFRawStream && obj.dict.get(PDFName.of("Subtype")) === PDFName.of("Image") && obj.dict.get(PDFName.of("Filter")) === PDFName.of("DCTDecode"))
+      fotos.push(obj.contents);
+  }
+  return fotos;
 }

@@ -86,15 +86,21 @@ async function viaOpenRouter(paginas: Pagina[], forte: boolean): Promise<FaturaE
       temperature: 0,
       max_tokens: 4000,
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(50_000),
   });
-  const corpo = (await res.json().catch(() => null)) as { choices?: { message?: { content?: string | null } }[]; error?: { message?: string } } | null;
+  // O OpenRouter pode devolver 200 com o erro dentro do corpo (ou só espaços e depois o JSON): lê-se como texto
+  const bruto = await res.text().catch(() => "");
+  let corpo: { choices?: { message?: { content?: string | null } }[]; error?: { message?: string; code?: number | string; metadata?: { raw?: string; provider_name?: string } } } | null = null;
+  try { corpo = JSON.parse(bruto.trim()); } catch { /* corpo inválido: tratado abaixo */ }
   if (!res.ok || !corpo?.choices?.length) {
-    const msg = corpo?.error?.message ?? `erro ${res.status}`;
-    throw new Error(res.status === 429 ? "Limite de pedidos da IA atingido; tente daqui a pouco." : `IA indisponível (${msg.slice(0, 120)})`);
+    const e = corpo?.error;
+    const motivo = [e?.message, e?.metadata?.provider_name, typeof e?.metadata?.raw === "string" ? e.metadata.raw : null].filter(Boolean).join(" · ")
+      || bruto.trim().slice(0, 120) || "resposta vazia";
+    if (res.status === 429 || e?.code === 429) throw new Error("Os modelos gratuitos da IA estão sobrecarregados (limite de pedidos). Use «Ler outra vez» daqui a pouco.");
+    throw new Error(`A IA não respondeu (${res.status}: ${motivo.slice(0, 160)}). Use «Ler outra vez» ou preencha à mão.`);
   }
   const t = corpo.choices[0].message?.content;
-  if (!t) throw new Error("A IA não devolveu dados.");
+  if (!t) throw new Error("A IA não devolveu dados. Use «Ler outra vez» ou preencha à mão.");
   const r = Fatura.safeParse(jsonDoTexto(t));
   if (!r.success) throw new Error("A IA devolveu dados num formato inesperado.");
   return r.data;

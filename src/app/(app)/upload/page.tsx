@@ -11,7 +11,7 @@ import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
 import Camara from "@/components/Camara";
 
-const LIMITE_BYTES = 3.4 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
+const LIMITE_BYTES = 3.2 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
 
 /** Foto → JPEG com o tamanho pedido (converte HEIC/WebP; mantém resolução suficiente para o QR ficar nítido). */
 async function paraJpeg(file: File, alvo: number): Promise<File> {
@@ -129,8 +129,10 @@ export default function Capturar() {
         fd.set("qr", it.qrTexto ?? "");
         if (it.pdf) fd.set("ficheiro", it.paginas[0]);
         else {
-          const alvo = Math.min(3 * 1024 * 1024, LIMITE_BYTES / it.paginas.length);
-          for (const p of it.paginas) fd.append("pagina", await paraJpeg(p, alvo));
+          // Original para guardar (qualidade máxima que cabe) + cópia pequena só para a IA ler depressa
+          const n = it.paginas.length, leitura = 450 * 1024;
+          const alvo = Math.min(2.7 * 1024 * 1024, (LIMITE_BYTES - n * leitura) / n);
+          for (const p of it.paginas) { fd.append("pagina", await paraJpeg(p, alvo)); fd.append("leitura", await paraJpeg(p, leitura)); }
         }
         const r = await carregarFatura(fd);
         atualizar(it.id, r.erro ? { estado: "erro", erro: r.erro } : { estado: "enviada", faturaId: r.id });
