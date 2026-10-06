@@ -14,6 +14,7 @@ Caixa de perguntas dentro da app, ex.: «Que máquinas da Indico estão paradas 
 ### Próximas melhorias (escolhidas; ordem de prioridade)
 1. **Stock parado e anúncios** (o que mais mexe com dinheiro): hoje 200 máquinas há mais de 1 ano ≈ 1,63 M€ em valor de compra. Lista «a vender», alerta aos 12 meses, anúncios prontos (texto, ficha, fotos).
 2. **Leitura automática de faturas com IA** (sem QR ou com QR ilegível): **feito, em testes** com OpenRouter e modelos gratuitos (`OPENROUTER_API_KEY` já na Vercel). Falta: testar com faturas fictícias variadas, decidir o modelo pago para produção (`AI_MODEL`) e confirmar com o dono a privacidade.
+2b. **Menos falhas nas leituras** (feito: leitura em segundo plano, validações — NIF, IVA/total, soma dos artigos, data, nome do fornecedor por NIF, cliente do grupo —, semáforo verde/amarelo/vermelho, fila «Para rever», 2.ª leitura com `AI_MODEL_FORTE`). Falta: guia de câmara na captura (fatura inteira, desfocada, escura) e endireitar/cortar a imagem antes de ler; medir a taxa de acerto com 30–50 faturas reais conferidas à mão e escolher o modelo pago.
 3. **Aviso de espaço da base de dados** (ex.: acima de 70% do limite) e **verificação periódica da cópia de segurança**.
 4. **Margem real por máquina vendida** (precisa de registar o valor de venda).
 5. **Gastos por fornecedor:** subidas de preço e duplicados.
@@ -43,6 +44,7 @@ Hoje os PDFs/fotos ficam na base de dados (~1 MB cada); o Pro inclui 8 GB, que a
 - [ ] Definições → Alertas por email: destinatários e **Enviar agora** para confirmar.
 - [ ] Corrigir o NIF da BIGEXAMPLE, S.A. (o dígito de controlo não é válido).
 - [ ] Apagar a chave OpenRouter de testes (foi escrita numa conversa) e criar outra, com limite de gasto, na Vercel.
+- [ ] Reunir 30–50 faturas reais (com os dados certos conferidos à mão) para medir a taxa de acerto da leitura por IA.
 - [ ] Antes de usar faturas reais: trocar `AI_MODEL` para um modelo pago (os gratuitos podem registar os pedidos).
 - [ ] Testar o pacote da contabilidade com faturas reais capturadas e confirmar que a plataforma deles lê os QR dos PDFs; perguntar se usam o TOConline e se têm acesso à API.
 - [ ] Registar os seguros, inspeções e IUC em «Prazos e documentos» e os alugueres nas fichas das máquinas (a Rentabilidade começa vazia).

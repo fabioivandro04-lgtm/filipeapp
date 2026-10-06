@@ -1,6 +1,7 @@
 "use server";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { query, queryOne, CATEGORIAS, CARGOS } from "@/lib/db";
 import { cookies } from "next/headers";
 import { editaDireto, login, logout, requireUser, terminarSessoes } from "@/lib/auth";
@@ -16,7 +17,8 @@ import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/h
 import { nifValido } from "@/lib/nif";
 import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
-import { extrairFatura, extracaoDisponivel, type FaturaExtraida, type Pagina } from "@/lib/extract";
+import { extracaoDisponivel, type Pagina } from "@/lib/extract";
+import { avisosFatura, completarComIa } from "@/lib/leitura-ia";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 import { fotosParaPdf, imagemConvertivel } from "@/lib/pdf";
 import { tipoReal } from "@/lib/ficheiros";
@@ -118,69 +120,43 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   const qr = lerQrFiscal(String(form.get("qr") ?? "")); // QR fiscal da AT, lido no browser
   const notas: string[] = [];
 
-  let d: FaturaExtraida | null = null;
-  if (extracaoDisponivel()) {
-    try { d = await extrairFatura(paraLer); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
-  } else if (!qr) {
-    notas.push("Sem leitura automática (falta a chave de IA): preencha os dados à mão.");
-  }
-
-  if (d && !qr) {
-    notas.push("Dados lidos por IA (sem QR): confirme-os antes de enviar à contabilidade.");
-    if (d.nif_fornecedor && !nifValido(d.nif_fornecedor)) notas.push(`NIF ${d.nif_fornecedor} lido pela IA não é válido (dígito de controlo): confirme.`);
-  }
-  // Os dados do QR são exatos: têm prioridade sobre a leitura por IA
-  const nif = qr?.nifEmitente ?? d?.nif_fornecedor ?? null;
-  const total = qr?.total ?? d?.total ?? null;
-  if (qr && d?.total != null && qr.total != null && Math.abs(d.total - qr.total) > 0.01)
-    notas.push(`A leitura automática (${d.total}) difere do QR (${qr.total}); foi usado o valor do QR.`);
-
-  // Fornecedor e categoria: o que a IA leu, senão o último fornecedor conhecido com o mesmo NIF
-  let fornecedor = d?.fornecedor ?? null;
-  let categoriaHist: string | null = null;
+  // Fornecedor e categoria: o último fornecedor conhecido com o mesmo NIF (a app aprende com o que já foi corrigido)
+  const nif = qr?.nifEmitente ?? null;
+  let fornecedor: string | null = null, categoriaHist: string | null = null;
   if (nif) {
     const h = await queryOne<{ fornecedor: string | null; categoria: string }>(
       "SELECT fornecedor, categoria FROM faturas WHERE nif_fornecedor = ? AND apagada_em IS NULL ORDER BY id DESC LIMIT 1", [nif]);
-    fornecedor ??= h?.fornecedor ?? null;
+    fornecedor = h?.fornecedor ?? null;
     categoriaHist = h?.categoria ?? null;
   }
-  if (qr && !fornecedor) notas.push("Falta o nome do fornecedor.");
 
   // Empresa: a que escreveu; senão a que tem o NIF do cliente lido no QR
   if (!empresaId && qr?.nifAdquirente) {
     empresaId = (await queryOne<{ id: number }>("SELECT id FROM empresas WHERE nif = ? AND apagada_em IS NULL", [qr.nifAdquirente]))?.id ?? null;
-    if (!empresaId) notas.push(`O NIF do cliente ${qr.nifAdquirente} ainda não está associado a nenhuma empresa.`);
   }
 
-  // Ligação por identificadores estáveis (nunca só pela morada: há moradas repetidas)
-  let predioId: number | null = null, maquinaId: number | null = null;
-  if (d?.identificador) {
-    const p = await queryOne<{ id: number }>("SELECT id FROM predios WHERE codigo_contador = ? AND apagada_em IS NULL", [d.identificador]);
-    predioId = p?.id ?? null;
-    if (!p && (d.categoria === "energia" || d.categoria === "agua")) notas.push(`Identificador ${d.identificador} não corresponde a nenhum prédio.`);
-  }
-  if (d?.numero_interno_maquina) {
-    const m = await maquinaPorNumero(d.numero_interno_maquina);
-    maquinaId = m?.id ?? null;
-    if (!m) notas.push(`Máquina ${d.numero_interno_maquina} não existe.`);
-  }
-  if (d?.duvidas) notas.push(d.duvidas);
+  // A IA lê em SEGUNDO PLANO (10-40 s com modelos gratuitos): a fatura fica guardada já e os dados preenchem-se logo a seguir.
+  // Com QR e fornecedor já conhecido não é preciso IA.
+  const ia = extracaoDisponivel() && !(qr && fornecedor);
+  if (!ia && qr && !fornecedor) notas.push("Falta o nome do fornecedor.");
+  if (!ia && !qr) notas.push("Sem leitura automática (falta a chave de IA): preencha os dados à mão.");
 
-  const categoria = (CATEGORIAS as readonly string[]).includes(categoriaManual) ? categoriaManual : d?.categoria ?? categoriaHist ?? "outros";
-  const numero = qr?.numero ?? d?.numero ?? null;
-  const data = qr?.data ?? d?.data ?? null;
-  notas.push(...(await avaliar({ fornecedor, nif, numero, data, total, categoria, atcud: qr?.atcud ?? null })));
+  const categoria = (CATEGORIAS as readonly string[]).includes(categoriaManual) ? categoriaManual : categoriaHist ?? "outros";
+  if (ia) notas.push(...(await avaliar({ fornecedor, nif, numero: qr?.numero ?? null, data: qr?.data ?? null, total: qr?.total ?? null, categoria, atcud: qr?.atcud ?? null })));
+  else notas.push(...(await avisosFatura({
+    fornecedor, nif, nifCliente: qr?.nifAdquirente ?? null, numero: qr?.numero ?? null, data: qr?.data ?? null, total: qr?.total ?? null,
+    iva: qr?.totalIva ?? null, categoria, atcud: qr?.atcud ?? null,
+  })));
 
   const fich = (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [file.type, bytes]))!;
   const nova = (await queryOne<{ id: number }>(
-    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,predio_id,maquina_id,
-       identificador,itens,alerta,atcud,nif_adquirente,tipo_doc,qr_lido)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
-    [user.id, fich.id, fornecedor, nif, numero, data, total, qr?.totalIva ?? d?.iva ?? null, categoria, empresaId, predioId, maquinaId,
-      d?.identificador ?? null, d ? JSON.stringify(d.itens) : null, notas.length ? notas.join(" ") : null,
-      qr?.atcud ?? null, qr?.nifAdquirente ?? null, qr?.tipo ?? null, qr ? 1 : 0],
+    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,alerta,atcud,nif_adquirente,tipo_doc,qr_lido,leitura)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+    [user.id, fich.id, fornecedor, nif, qr?.numero ?? null, qr?.data ?? null, qr?.total ?? null, qr?.totalIva ?? null, categoria, empresaId,
+      notas.length ? notas.join(" ") : null, qr?.atcud ?? null, qr?.nifAdquirente ?? null, qr?.tipo ?? null, qr ? 1 : 0, ia ? "pendente" : qr ? "qr" : "manual"],
   ))!;
-  await registar(user, nova.id, "criada", { fornecedor, numero, total, qr: !!qr });
+  if (ia) after(() => completarComIa(nova.id, paraLer).catch(() => query("UPDATE faturas SET leitura = ? WHERE id = ? AND leitura = 'pendente'", [qr ? "qr" : "falhou", nova.id])));
+  await registar(user, nova.id, "criada", { fornecedor, numero: qr?.numero ?? null, total: qr?.total ?? null, qr: !!qr, ia });
   revalidatePath("/", "layout");
   return { id: nova.id };
 }
@@ -203,10 +179,11 @@ type Campos = Record<(typeof CAMPOS_EDITAVEIS)[number], unknown>;
 async function aplicarCampos(user: { id: number }, id: number, antes: Record<string, unknown>, depois: Campos) {
   const revisada = depois.revisada ? 1 : 0;
   // Ao guardar, os avisos são recalculados (marcar como revista limpa-os)
-  const avisos = revisada ? [] : await avaliar({
-    fornecedor: depois.fornecedor as string | null, nif: depois.nif_fornecedor as string | null, numero: depois.numero as string | null,
-    data: depois.data as string | null, total: depois.total as number | null, categoria: String(depois.categoria),
-    excluirId: id, predioId: depois.predio_id as number | null, atcud: (antes.atcud as string | null) ?? null,
+  const avisos = revisada ? [] : await avisosFatura({
+    id, fornecedor: depois.fornecedor as string | null, nif: depois.nif_fornecedor as string | null, nifCliente: depois.nif_adquirente as string | null,
+    numero: depois.numero as string | null, data: depois.data as string | null, total: depois.total as number | null, iva: depois.iva as number | null,
+    categoria: String(depois.categoria), predioId: depois.predio_id as number | null, atcud: (antes.atcud as string | null) ?? null,
+    itens: antes.itens ? JSON.parse(String(antes.itens)) : null,
   });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,

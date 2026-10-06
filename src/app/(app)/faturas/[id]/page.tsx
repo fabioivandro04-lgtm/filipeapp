@@ -11,6 +11,8 @@ import { listarHistorico } from "@/lib/historico";
 import HistoricoLista from "@/components/HistoricoLista";
 import { PageHeader } from "@/components/Ui";
 import { Voltar } from "@/components/Voltar";
+import AtualizarSePendente from "@/components/AtualizarSePendente";
+import { CLASSE_SEMAFORO, semaforo } from "@/lib/semaforo";
 
 type Item = { descricao: string; quantidade: number | null; preco_unitario: number | null; total: number | null };
 
@@ -35,8 +37,10 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
   return (
     <>
       <Voltar lista="/" texto="Faturas" />
+      <AtualizarSePendente ativo={f.leitura === "pendente"} />
       <div className="mt-2"><PageHeader titulo={f.fornecedor ?? "Fatura sem nome"} subtitulo={`Carregada por ${f.criado_por_nome} em ${f.criado_em.slice(0, 10)}`}>
           {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
+          {(() => { const e = semaforo(f); return <span className={`badge ${CLASSE_SEMAFORO[e.cor]}`}>{e.texto}</span>; })()}
           {f.enviada_em && <span className="badge bg-sky-100 text-sky-800">Enviada à contabilidade</span>}
         </PageHeader></div>
 
@@ -62,6 +66,8 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
         </div>
       ))}
 
+      {f.leitura === "pendente" && <p className="mb-4 rounded-xl bg-slate-100 p-3 text-sm text-slate-700">A ler os dados da fatura… vão aparecer aqui dentro de instantes (pode preencher à mão, se preferir).</p>}
+      {f.leitura === "ia" && !f.revisada && !f.alerta && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">Dados lidos por IA: confira com a imagem ao lado e marque «revista».</p>}
       {f.alerta && !f.revisada && <p className="mb-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{f.alerta}</p>}
 
       <div className="grid gap-6 lg:grid-cols-[1fr_1.1fr]">

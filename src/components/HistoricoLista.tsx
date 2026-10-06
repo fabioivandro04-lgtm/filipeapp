@@ -23,6 +23,7 @@ function acaoEntidade(acao: string): string | null {
 }
 
 const ACAO: Record<string, string> = {
+  leitura_ia: "(IA) leu os dados de", leitura_ia_falhou: "(IA) não conseguiu ler",
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
   revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
   sessao_entrou: "entrou na app", sessao_saiu: "saiu da app", utilizador_cargo: "mudou o cargo de", utilizador_senha: "redefiniu a palavra-passe de",

@@ -44,10 +44,10 @@ export async function montarAlertas(tipos: TipoAlerta[]): Promise<Seccao[]> {
       `${ROTULO_DOCUMENTO[d.tipo as TipoDocumento] ?? d.tipo}${d.numero ? ` · ${d.numero}` : ""}${d.descricao ? ` · ${d.descricao}` : ""}${d.empresa ? ` (${d.empresa})` : ""}: válido até ${dataPt(d.validade)}, ${textoPrazo(d.validade)}`) });
   }
   if (tipos.includes("faturas")) {
-    const f = await query<{ fornecedor: string | null; numero: string | null; total: number | null; alerta: string }>(
-      "SELECT fornecedor, numero, total, alerta FROM faturas WHERE apagada_em IS NULL AND alerta IS NOT NULL AND revisada = 0 ORDER BY id DESC LIMIT 30");
+    const f = await query<{ fornecedor: string | null; numero: string | null; total: number | null; alerta: string | null }>(
+      "SELECT fornecedor, numero, total, alerta FROM faturas WHERE apagada_em IS NULL AND revisada = 0 AND (alerta IS NOT NULL OR leitura IN ('ia','falhou')) ORDER BY id DESC LIMIT 30");
     if (f.length) s.push({ titulo: `Faturas para rever (${f.length}${f.length === 30 ? "+" : ""})`, linhas: f.map((x) =>
-      `${x.fornecedor ?? "Sem fornecedor"}${x.numero ? ` ${x.numero}` : ""} · ${money(x.total)}: ${x.alerta}`) });
+      `${x.fornecedor ?? "Sem fornecedor"}${x.numero ? ` ${x.numero}` : ""} · ${money(x.total)}: ${x.alerta ?? "dados lidos por IA, confirmar."}`) });
   }
   if (tipos.includes("aprovacoes")) {
     const n = (await queryOne<{ n: number }>("SELECT COUNT(*)::int AS n FROM propostas WHERE estado = 'pendente'"))?.n ?? 0;

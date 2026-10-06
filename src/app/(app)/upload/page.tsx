@@ -240,8 +240,8 @@ export default function Capturar() {
 
 function Situacao({ it }: { it: Item }) {
   if (it.estado === "a-ler") return <p className="text-slate-500">A procurar o QR code…</p>;
-  if (it.estado === "a-enviar") return <p className="text-slate-500">A enviar e a ler os dados…</p>;
-  if (it.estado === "enviada") return <p className="text-emerald-700">Guardada. <Link href={`/faturas/${it.faturaId}`} className="font-medium underline">Abrir e confirmar</Link></p>;
+  if (it.estado === "a-enviar") return <p className="text-slate-500">A enviar…</p>;
+  if (it.estado === "enviada") return <p className="text-emerald-700">Guardada. Os dados são lidos em segundo plano. <Link href={`/faturas/${it.faturaId}`} className="font-medium underline">Abrir e confirmar</Link></p>;
   const q = it.qr;
   return (
     <>

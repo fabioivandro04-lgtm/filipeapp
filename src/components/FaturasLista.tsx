@@ -2,11 +2,19 @@ import Link from "next/link";
 import type { FaturaRow } from "@/lib/queries";
 import { dataPt, money } from "@/lib/format";
 import { CategoriaBadge, Vazio } from "./Ui";
+import { CLASSE_SEMAFORO, semaforo } from "@/lib/semaforo";
+import AtualizarSePendente from "./AtualizarSePendente";
+
+function Estado({ f }: { f: FaturaRow }) {
+  const s = semaforo(f);
+  return <span className={`badge ${CLASSE_SEMAFORO[s.cor]}`}>{s.texto}</span>;
+}
 
 export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
   if (!faturas.length) return <Vazio texto="Ainda não há faturas aqui." />;
   return (
     <>
+      <AtualizarSePendente ativo={faturas.some((f) => f.leitura === "pendente")} />
       {/* Telemóvel: cartões */}
       <ul className="space-y-3 md:hidden">
         {faturas.map((f) => (
@@ -24,7 +32,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                 {(f.predio_nome || f.maquina_numero) && <span className="text-xs text-slate-500">{f.predio_nome ?? `Máquina ${f.maquina_numero}`}</span>}
                 {f.empresa_nome && <span className="text-xs text-slate-400">· {f.empresa_nome}</span>}
                 {f.intragrupo && <span className="badge bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
-                {f.alerta && !f.revisada && <span className="badge bg-amber-100 text-amber-800">Rever</span>}
+                <Estado f={f} />
               </div>
             </Link>
           </li>
@@ -35,8 +43,8 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
       <div className="card hidden overflow-hidden md:block">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>{["Data", "Fornecedor", "Categoria", "Empresa", "Prédio / Máquina", "Total"].map((h, i) => (
-              <th key={h} className={`px-4 py-3 font-medium ${i === 5 ? "text-right" : ""}`}>{h}</th>))}</tr>
+            <tr>{["Data", "Fornecedor", "Estado", "Categoria", "Empresa", "Prédio / Máquina", "Total"].map((h, i) => (
+              <th key={h} className={`px-4 py-3 font-medium ${i === 6 ? "text-right" : ""}`}>{h}</th>))}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {faturas.map((f) => (
@@ -47,6 +55,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                   <span className="ml-2 text-xs text-slate-400">{f.numero}</span>{f.intragrupo && <span className="badge ml-2 bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
                   {f.alerta && !f.revisada && <p className="mt-0.5 text-xs text-amber-700">{f.alerta}</p>}
                 </td>
+                <td className="px-4 py-3"><Estado f={f} /></td>
                 <td className="px-4 py-3"><CategoriaBadge categoria={f.categoria} /></td>
                 <td className="px-4 py-3 text-slate-600">{f.empresa_nome ?? "—"}</td>
                 <td className="px-4 py-3 text-slate-600">{f.predio_nome ?? (f.maquina_numero ? `Máquina ${f.maquina_numero}` : "—")}</td>

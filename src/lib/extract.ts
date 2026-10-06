@@ -15,6 +15,7 @@ const texto = z.preprocess((v) => (v == null || String(v).trim() === "" ? null :
 const Fatura = z.object({
   fornecedor: texto,
   nif_fornecedor: texto,
+  nif_cliente: texto.describe("NIF do cliente (a quem a fatura é emitida), 9 dígitos"),
   numero: texto,
   data: texto.describe("YYYY-MM-DD"),
   total: numero,
@@ -33,7 +34,7 @@ export type FaturaExtraida = z.infer<typeof Fatura>;
 const PROMPT = `Lê esta fatura portuguesa e extrai os dados. Categorias: energia (eletricidade/gás), agua, contabilidade (serviços de contabilidade, impostos, seguros), predio (obras, condomínio, manutenção de prédios), maquinas (peças, pneus, filtros, combustível de máquinas), outros. Não inventes valores: usa null quando não estiver legível e descreve o problema em "duvidas".`;
 
 const FORMATO_JSON = `Responde APENAS com um objeto JSON (sem texto antes ou depois, sem markdown) com estas chaves:
-{"fornecedor": string|null, "nif_fornecedor": string|null (9 dígitos), "numero": string|null (nº da fatura), "data": "YYYY-MM-DD"|null, "total": number|null (valor total com IVA, ponto decimal), "iva": number|null (valor do IVA), "categoria": "${CATEGORIAS.join('"|"')}", "identificador": string|null (nº de contador, CPE/CUI ou código de cliente), "morada_servico": string|null, "numero_interno_maquina": string|null, "itens": [{"descricao": string, "quantidade": number|null, "preco_unitario": number|null, "total": number|null}], "duvidas": string|null}`;
+{"fornecedor": string|null, "nif_fornecedor": string|null (9 dígitos, do emitente), "nif_cliente": string|null (9 dígitos, do cliente a quem a fatura é emitida), "numero": string|null (nº da fatura), "data": "YYYY-MM-DD"|null, "total": number|null (valor total com IVA, ponto decimal), "iva": number|null (valor do IVA), "categoria": "${CATEGORIAS.join('"|"')}", "identificador": string|null (nº de contador, CPE/CUI ou código de cliente), "morada_servico": string|null, "numero_interno_maquina": string|null, "itens": [{"descricao": string, "quantidade": number|null, "preco_unitario": number|null, "total": number|null}], "duvidas": string|null}`;
 
 export type Pagina = { bytes: Buffer; mime: string };
 
@@ -51,7 +52,7 @@ export const nomeFornecedorIa = () => fornecedor();
 
 /** Modelos pela ordem de preferência (o OpenRouter experimenta o seguinte se um falhar). Por omissão, só gratuitos com visão. */
 const MODELOS_PADRAO = "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,dots-studio/dots-3-note-preview:free";
-const modelosOpenRouter = () => (process.env.AI_MODEL || MODELOS_PADRAO).split(",").map((m) => m.trim()).filter(Boolean).slice(0, 3);
+const modelosOpenRouter = (forte = false) => ((forte && process.env.AI_MODEL_FORTE) || process.env.AI_MODEL || MODELOS_PADRAO).split(",").map((m) => m.trim()).filter(Boolean).slice(0, 3);
 
 /** Primeiro objeto JSON do texto (os modelos às vezes rodeiam-no de ```json ... ```). */
 function jsonDoTexto(t: string): unknown {
@@ -62,15 +63,15 @@ function jsonDoTexto(t: string): unknown {
   return JSON.parse(limpo.slice(ini, fim + 1));
 }
 
-async function viaOpenRouter(paginas: Pagina[]): Promise<FaturaExtraida> {
+async function viaOpenRouter(paginas: Pagina[], forte: boolean): Promise<FaturaExtraida> {
   const conteudo: unknown[] = paginas.map((p) =>
     p.mime === "application/pdf"
       ? { type: "file", file: { filename: "fatura.pdf", file_data: `data:application/pdf;base64,${p.bytes.toString("base64")}` } }
       : { type: "image_url", image_url: { url: `data:${p.mime};base64,${p.bytes.toString("base64")}` } },
   );
   conteudo.push({ type: "text", text: `${PROMPT}\n\n${FORMATO_JSON}` });
-  const modelos = modelosOpenRouter();
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const modelos = modelosOpenRouter(forte);
+  const res = await fetch(`${process.env.AI_BASE_URL || "https://openrouter.ai/api/v1"}/chat/completions`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
@@ -117,7 +118,10 @@ async function viaAnthropic(paginas: Pagina[]): Promise<FaturaExtraida> {
   return res.parsed_output;
 }
 
-/** Lê uma fatura (um PDF, ou uma ou mais fotos) com o fornecedor de IA configurado. */
-export async function extrairFatura(paginas: Pagina[]): Promise<FaturaExtraida> {
-  return fornecedor() === "anthropic" ? viaAnthropic(paginas) : viaOpenRouter(paginas);
+/** Há um modelo mais forte configurado (AI_MODEL_FORTE) para uma segunda leitura quando a primeira não passa nas validações. */
+export const temModeloForte = () => fornecedor() === "openrouter" && Boolean(process.env.AI_MODEL_FORTE);
+
+/** Lê uma fatura (um PDF, ou uma ou mais fotos) com o fornecedor de IA configurado. `forte`: usa AI_MODEL_FORTE. */
+export async function extrairFatura(paginas: Pagina[], forte = false): Promise<FaturaExtraida> {
+  return fornecedor() === "anthropic" ? viaAnthropic(paginas) : viaOpenRouter(paginas, forte);
 }

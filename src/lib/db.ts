@@ -124,6 +124,9 @@ const SCHEMA = `
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS nif_adquirente TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS tipo_doc TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS qr_lido INTEGER NOT NULL DEFAULT 0;
+  -- Como os dados foram obtidos: qr, ia, manual; 'pendente' enquanto a IA lê em segundo plano; 'falhou' se a leitura não deu
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS leitura TEXT NOT NULL DEFAULT 'manual';
+  UPDATE faturas SET leitura = 'qr' WHERE qr_lido = 1 AND leitura = 'manual';
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS enviada_em TEXT;
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);

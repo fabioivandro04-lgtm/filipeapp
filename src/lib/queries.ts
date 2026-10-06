@@ -8,7 +8,7 @@ export type FaturaRow = {
   predio_id: number | null; maquina_id: number | null; empresa_id: number | null; empresa_nome: string | null;
   predio_nome: string | null; maquina_numero: string | null; identificador: string | null; itens: string | null;
   alerta: string | null; ficheiro_id: number | null; ficheiro_mime: string | null; revisada: number;
-  atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; enviada_em: string | null; intragrupo: boolean;
+  atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; leitura: string; enviada_em: string | null; intragrupo: boolean;
 };
 
 /** Todos os cargos vêem todas as faturas (menos as apagadas). O `u` fica para o caso de voltarmos a restringir. */
@@ -35,7 +35,7 @@ export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<Fatur
   if (filtro.empresa_id) { where.push("f.empresa_id = ?"); args.push(filtro.empresa_id); }
   if (filtro.mes) { where.push("substr(COALESCE(f.data,f.criado_em),1,7) = ?"); args.push(filtro.mes); }
   if (filtro.pendentesEnvio) where.push("f.enviada_em IS NULL");
-  if (filtro.alerta) where.push("f.alerta IS NOT NULL AND f.revisada = 0");
+  if (filtro.alerta) where.push(`f.revisada = 0 AND (f.alerta IS NOT NULL OR f.leitura IN ('ia','falhou'))`);
   return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC LIMIT ${Math.min(filtro.limite ?? 500, 5000)}`, args);
 }
 
@@ -50,7 +50,7 @@ export async function resumo(u: User) {
   const r = (await queryOne<{ n: number; total: number; mes: number; alertas: number }>(
     `SELECT COUNT(*)::int AS n, COALESCE(SUM(total),0)::float8 AS total,
        COALESCE(SUM(CASE WHEN substr(COALESCE(data,criado_em),1,7) = ? THEN total END),0)::float8 AS mes,
-       COALESCE(SUM(CASE WHEN alerta IS NOT NULL AND revisada = 0 THEN 1 ELSE 0 END),0)::int AS alertas
+       COALESCE(SUM(CASE WHEN revisada = 0 AND (alerta IS NOT NULL OR leitura IN ('ia','falhou')) THEN 1 ELSE 0 END),0)::int AS alertas
      FROM faturas f WHERE ${v.sql}`,
     [mes, ...v.args],
   ))!;

@@ -22,7 +22,7 @@ export default async function Alertas() {
       )}
 
       <h2 className="mb-3 text-lg font-semibold">Faturas para rever ({porRever.length})</h2>
-      <p className="mb-3 text-sm text-slate-500">Possíveis duplicados, valores fora do normal, dados por ler ou sem prédio. Abra a fatura, corrija e marque «revista».</p>
+      <p className="mb-3 text-sm text-slate-500">Vermelho: falhou uma verificação (duplicado, NIF, IVA, valor fora do normal, sem prédio). Amarelo: dados lidos por IA, para confirmar com a imagem. Abra a fatura, corrija e marque «revista».</p>
       {porRever.length ? <FaturasLista faturas={porRever} /> : <Vazio texto="Tudo em ordem: não há faturas para rever." />}
 
       <h2 className="mb-3 mt-10 text-lg font-semibold">Meses sem fatura ({faltas.length})</h2>
