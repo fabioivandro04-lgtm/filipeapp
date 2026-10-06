@@ -16,7 +16,7 @@ import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/h
 import { nifValido } from "@/lib/nif";
 import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
-import { extrairFatura, extracaoDisponivel, type FaturaExtraida } from "@/lib/extract";
+import { extrairFatura, extracaoDisponivel, type FaturaExtraida, type Pagina } from "@/lib/extract";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 import { fotosParaPdf, imagemConvertivel } from "@/lib/pdf";
 import { tipoReal } from "@/lib/ficheiros";
@@ -104,13 +104,12 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
   // Fotos são guardadas como PDF (com a foto intacta): é o formato que a plataforma da contabilidade lê, QR incluído
   let file: { type: string } = { type: reais[0].mime };
   let bytes = reais[0].dados;
-  let paraLer = { bytes, mime: reais[0].mime }; // o que a leitura automática recebe
+  const paraLer: Pagina[] = reais.map((r) => ({ bytes: r.dados, mime: r.mime })); // o que a leitura automática recebe (fotos soltas, nunca o PDF montado)
   if (reais.every((r) => imagemConvertivel(r.mime))) {
     const imagens = reais.map((r) => ({ bytes: new Uint8Array(r.dados), mime: r.mime }));
     try {
       bytes = Buffer.from(await fotosParaPdf(imagens));
       file = { type: "application/pdf" };
-      paraLer = ficheiros.length === 1 ? { bytes: Buffer.from(imagens[0].bytes), mime: imagens[0].mime } : { bytes, mime: "application/pdf" };
     } catch { /* se a conversão falhar, guarda a foto como veio */ }
   } else if (reais.length > 1) return { erro: "Várias páginas só com fotos (JPEG/PNG)." };
   const nomeEmpresa = String(form.get("empresa") ?? "").trim() || null;
@@ -121,11 +120,15 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
 
   let d: FaturaExtraida | null = null;
   if (extracaoDisponivel()) {
-    try { d = await extrairFatura(paraLer.bytes, paraLer.mime); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
+    try { d = await extrairFatura(paraLer); } catch (e) { notas.push(`Leitura automática falhou: ${(e as Error).message}`); }
   } else if (!qr) {
-    notas.push("Sem leitura automática (falta ANTHROPIC_API_KEY): preencha os dados à mão.");
+    notas.push("Sem leitura automática (falta a chave de IA): preencha os dados à mão.");
   }
 
+  if (d && !qr) {
+    notas.push("Dados lidos por IA (sem QR): confirme-os antes de enviar à contabilidade.");
+    if (d.nif_fornecedor && !nifValido(d.nif_fornecedor)) notas.push(`NIF ${d.nif_fornecedor} lido pela IA não é válido (dígito de controlo): confirme.`);
+  }
   // Os dados do QR são exatos: têm prioridade sobre a leitura por IA
   const nif = qr?.nifEmitente ?? d?.nif_fornecedor ?? null;
   const total = qr?.total ?? d?.total ?? null;

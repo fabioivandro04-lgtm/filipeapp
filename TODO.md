@@ -13,7 +13,7 @@ Caixa de perguntas dentro da app, ex.: «Que máquinas da Indico estão paradas 
 
 ### Próximas melhorias (escolhidas; ordem de prioridade)
 1. **Stock parado e anúncios** (o que mais mexe com dinheiro): hoje 200 máquinas há mais de 1 ano ≈ 1,63 M€ em valor de compra. Lista «a vender», alerta aos 12 meses, anúncios prontos (texto, ficha, fotos).
-2. **Leitura automática de faturas com IA** (sem QR ou com QR ilegível): fornecedor, NIF, valor, IVA, data. Precisa de `ANTHROPIC_API_KEY` na Vercel.
+2. **Leitura automática de faturas com IA** (sem QR ou com QR ilegível): **feito, em testes** com OpenRouter e modelos gratuitos (`OPENROUTER_API_KEY` já na Vercel). Falta: testar com faturas fictícias variadas, decidir o modelo pago para produção (`AI_MODEL`) e confirmar com o dono a privacidade.
 3. **Aviso de espaço da base de dados** (ex.: acima de 70% do limite) e **verificação periódica da cópia de segurança**.
 4. **Margem real por máquina vendida** (precisa de registar o valor de venda).
 5. **Gastos por fornecedor:** subidas de preço e duplicados.
@@ -42,7 +42,8 @@ Hoje os PDFs/fotos ficam na base de dados (~1 MB cada); o Pro inclui 8 GB, que a
 - [ ] Definições → Servidor de email (Gmail: `smtp.gmail.com`, porta 465, palavra-passe de aplicação) e **Enviar email de teste**.
 - [ ] Definições → Alertas por email: destinatários e **Enviar agora** para confirmar.
 - [ ] Corrigir o NIF da BIGEXAMPLE, S.A. (o dígito de controlo não é válido).
-- [ ] Criar `ANTHROPIC_API_KEY` na Vercel (leitura automática de faturas; e, mais tarde, «Perguntar à app»).
+- [ ] Apagar a chave OpenRouter de testes (foi escrita numa conversa) e criar outra, com limite de gasto, na Vercel.
+- [ ] Antes de usar faturas reais: trocar `AI_MODEL` para um modelo pago (os gratuitos podem registar os pedidos).
 - [ ] Testar o pacote da contabilidade com faturas reais capturadas e confirmar que a plataforma deles lê os QR dos PDFs; perguntar se usam o TOConline e se têm acesso à API.
 - [ ] Registar os seguros, inspeções e IUC em «Prazos e documentos» e os alugueres nas fichas das máquinas (a Rentabilidade começa vazia).
 - [ ] Reenviar às empresas a lista `Problemas_stock_para_corrigir.xlsx` e importar os ficheiros corrigidos (Máquinas → Importar stock).

@@ -48,7 +48,10 @@ Variáveis de ambiente:
 | `COOKIE_SECURE=1` | Cookie só por HTTPS (em produção já é sempre assim; serve para forçar noutros ambientes). |
 | `APP_SECRET` | Chave que cifra os segredos guardados na base de dados (palavra-passe do email nas Definições). Se mudar, esses segredos têm de ser escritos de novo. |
 | `CRON_SECRET` | Protege o envio diário de alertas por email (`/api/cron/alertas`). |
-| `ANTHROPIC_API_KEY` | Leitura automática por IA (fornecedor, categoria, artigos). Sem ela o QR fiscal continua a funcionar. |
+| `OPENROUTER_API_KEY` | Leitura automática por IA via OpenRouter (fornecedor, NIF, nº, data, total, IVA, categoria, artigos). Sem chave de IA o QR fiscal continua a funcionar. |
+| `AI_MODEL` | Opcional: até 3 modelos do OpenRouter, separados por vírgula (a ordem é a de preferência). Por omissão, modelos **gratuitos** com visão: servem para testes, **não** para faturas reais (os gratuitos podem registar os pedidos). Produção: um modelo pago, p. ex. `google/gemini-3.5-flash-lite` ou `anthropic/claude-haiku-4.5`. |
+| `AI_PROVIDER` | Opcional: `openrouter` ou `anthropic` (por omissão, o que tiver chave). |
+| `ANTHROPIC_API_KEY` | Alternativa: leitura direta pela API da Anthropic. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envio de email à contabilidade. Gmail: `smtp.gmail.com`, porta `465`, palavra-passe de aplicação. |
 
 
