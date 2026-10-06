@@ -9,8 +9,9 @@ import { tirarCapturas } from "@/lib/capturas";
 import { dataPt, money } from "@/lib/format";
 import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
+import Camara from "@/components/Camara";
 
-const LIMITE_BYTES = 3.2 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
+const LIMITE_BYTES = 3.4 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
 
 /** Foto → JPEG com o tamanho pedido (converte HEIC/WebP; mantém resolução suficiente para o QR ficar nítido). */
 async function paraJpeg(file: File, alvo: number): Promise<File> {
@@ -19,7 +20,7 @@ async function paraJpeg(file: File, alvo: number): Promise<File> {
   try {
     const bmp = await createImageBitmap(file);
     let melhor: Blob | null = null;
-    for (const [lado, qualidade] of [[2400, 0.86], [2000, 0.8], [1600, 0.74], [1300, 0.68]]) {
+    for (const [lado, qualidade] of [[3000, 0.9], [2600, 0.88], [2200, 0.84], [1800, 0.78], [1500, 0.72]]) {
       const esc = Math.min(1, lado / Math.max(bmp.width, bmp.height));
       const canvas = document.createElement("canvas");
       canvas.width = Math.round(bmp.width * esc);
@@ -49,6 +50,10 @@ export default function Capturar() {
   const [aEnviar, setAEnviar] = useState(false);
   const [empresa, setEmpresa] = useState("");
   const [categoria, setCategoria] = useState("");
+  // Câmara própria (resolução máxima, guia e QR em direto). `nativa` é o plano B: a câmara do telemóvel.
+  const [camara, setCamara] = useState<{ modo: "nova" | "pagina" | "substituir"; id?: number } | null>(null);
+  const alvoNativo = useRef<{ modo: "nova" | "pagina" | "substituir"; id?: number } | null>(null);
+  const nativa = useRef<HTMLInputElement>(null);
   const itensRef = useRef(itens);
   useEffect(() => { itensRef.current = itens; }, [itens]);
 
@@ -99,6 +104,17 @@ export default function Capturar() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  function fotoDaCamara(f: File) {
+    if (!camara) return;
+    if (camara.modo === "nova") novasFaturas([f]);
+    else if (camara.id) juntarPagina(camara.id, [f], camara.modo === "substituir");
+  }
+  function semCamara() {
+    alvoNativo.current = camara;
+    setCamara(null);
+    nativa.current?.click();
+  }
+
   const prontas = itens.filter((i) => ["qr", "sem-qr", "erro"].includes(i.estado) && (!i.verif?.duplicada || i.forcar));
   const aLer = itens.some((i) => i.estado === "a-ler");
 
@@ -113,7 +129,7 @@ export default function Capturar() {
         fd.set("qr", it.qrTexto ?? "");
         if (it.pdf) fd.set("ficheiro", it.paginas[0]);
         else {
-          const alvo = Math.min(1.8 * 1024 * 1024, LIMITE_BYTES / it.paginas.length);
+          const alvo = Math.min(3 * 1024 * 1024, LIMITE_BYTES / it.paginas.length);
           for (const p of it.paginas) fd.append("pagina", await paraJpeg(p, alvo));
         }
         const r = await carregarFatura(fd);
@@ -134,11 +150,9 @@ export default function Capturar() {
 
       {!tudoEnviado && (
         <div className="mb-4 grid gap-3 sm:grid-cols-2">
-          <label className="btn-primary cursor-pointer py-4 text-base">
+          <button type="button" disabled={aEnviar} onClick={() => setCamara({ modo: "nova" })} className="btn-primary py-4 text-base">
             <Icone nome="camara" className="h-5 w-5" />Tirar foto
-            <input type="file" accept="image/*" capture="environment" disabled={aEnviar} className="sr-only"
-              onChange={(e) => { novasFaturas(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-          </label>
+          </button>
           <label className="btn-ghost cursor-pointer py-4 text-base">
             <Icone nome="faturas" className="h-5 w-5" />Escolher ficheiros (PDF ou fotos)
             <input type="file" multiple accept="image/*,application/pdf" disabled={aEnviar} className="sr-only"
@@ -147,12 +161,21 @@ export default function Capturar() {
         </div>
       )}
 
+      <Camara aberta={!!camara} modo={camara?.modo === "nova" ? "varias" : "uma"} onFoto={fotoDaCamara} onFechar={() => setCamara(null)} onSemCamara={semCamara} />
+      <input ref={nativa} type="file" accept="image/*" capture="environment" className="sr-only"
+        onChange={(e) => {
+          const f = Array.from(e.target.files ?? []); e.target.value = "";
+          const a = alvoNativo.current; if (!f.length || !a) return;
+          if (a.modo === "nova") novasFaturas(f); else if (a.id) juntarPagina(a.id, f, a.modo === "substituir");
+        }} />
+
       {!itens.length && (
         <div className="card p-5 text-sm text-slate-600">
           <p className="mb-2 font-medium text-slate-900">Para a foto sair bem</p>
           <ul className="list-disc space-y-1 pl-5">
-            <li>Fatura inteira na foto, em cima de uma superfície lisa e com boa luz (sem sombra do telemóvel).</li>
-            <li>O QR code tem de ficar nítido: é dele que saem o NIF, o número, a data e o total, sem erros.</li>
+            <li>Fatura inteira dentro dos cantos da câmara, em cima de uma superfície lisa e com boa luz (sem a sombra do telemóvel). Com pouca luz, ligue a lanterna.</li>
+            <li>O QR code tem de ficar nítido: é dele que saem o NIF, o número, a data e o total, sem erros. A câmara avisa quando o detetar e tira a foto sozinha.</li>
+            <li>Toque no ecrã para focar. Se a imagem estiver a focar, espere um segundo antes de tirar.</li>
             <li>Fatura com várias folhas? Tire a primeira e use «+ Página» para juntar as outras.</li>
           </ul>
         </div>
@@ -185,18 +208,10 @@ export default function Capturar() {
             {!["a-enviar", "enviada"].includes(it.estado) && !aEnviar && (
               <div className="mt-3 flex flex-wrap gap-2">
                 {!it.pdf && (
-                  <label className="btn-ghost cursor-pointer px-3 py-1.5 text-xs">
-                    + Página
-                    <input type="file" accept="image/*" capture="environment" className="sr-only"
-                      onChange={(e) => { juntarPagina(it.id, Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-                  </label>
+                  <button type="button" onClick={() => setCamara({ modo: "pagina", id: it.id })} className="btn-ghost px-3 py-1.5 text-xs">+ Página</button>
                 )}
                 {it.estado === "sem-qr" && !it.pdf && (
-                  <label className="btn-ghost cursor-pointer px-3 py-1.5 text-xs">
-                    Tirar outra vez
-                    <input type="file" accept="image/*" capture="environment" className="sr-only"
-                      onChange={(e) => { juntarPagina(it.id, Array.from(e.target.files ?? []), true); e.target.value = ""; }} />
-                  </label>
+                  <button type="button" onClick={() => setCamara({ modo: "substituir", id: it.id })} className="btn-ghost px-3 py-1.5 text-xs">Tirar outra vez</button>
                 )}
                 <button type="button" onClick={() => remover(it.id)} className="btn-ghost px-3 py-1.5 text-xs text-red-600">Remover</button>
               </div>
