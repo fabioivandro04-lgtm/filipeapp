@@ -1,5 +1,5 @@
 import { query, queryOne } from "./db";
-import { extrairFatura, temModeloForte, type FaturaExtraida, type Pagina } from "./extract";
+import { extrairFatura, temModeloForte, TEMPO_LEITURA_MS, type FaturaExtraida, type Pagina } from "./extract";
 import { validarFatura, nomesParecidos } from "./validacao";
 import { avaliar } from "./alertas";
 import { registar } from "./historico";
@@ -47,13 +47,14 @@ export async function completarComIa(faturaId: number, paginas: Pagina[]): Promi
   if (!row) return;
   const notas: string[] = [];
   let d: FaturaExtraida | null = null;
+  const ate = Date.now() + TEMPO_LEITURA_MS; // as duas leituras partilham o tempo da função
   try {
-    d = await extrairFatura(paginas);
+    d = await extrairFatura(paginas, false, ate);
     // Conta validações falhadas e campos essenciais por ler: se houver, vale a pena uma segunda leitura com o modelo mais forte
     const problemas = (x: FaturaExtraida) => validarFatura({ nif: x.nif_fornecedor, data: dataOk(x.data), total: x.total, iva: x.iva, itens: x.itens }).length + (x.fornecedor ? 0 : 1) + (x.numero ? 0 : 1);
     // Segunda leitura com o modelo mais forte, só quando a primeira não passa nas validações
-    if (problemas(d) > 0 && temModeloForte()) {
-      try { const d2 = await extrairFatura(paginas, true); if (problemas(d2) <= problemas(d)) d = d2; } catch { /* fica a primeira */ }
+    if (problemas(d) > 0 && temModeloForte() && ate - Date.now() > 30_000) {
+      try { const d2 = await extrairFatura(paginas, true, ate); if (problemas(d2) <= problemas(d)) d = d2; } catch { /* fica a primeira */ }
     }
   } catch (e) {
     notas.push(`Leitura automática falhou: ${(e as Error).message}`);
