@@ -14,6 +14,9 @@ import { Voltar } from "@/components/Voltar";
 import AtualizarSePendente from "@/components/AtualizarSePendente";
 import { CLASSE_SEMAFORO, semaforo } from "@/lib/semaforo";
 
+// «Ler outra vez com IA» lê a fatura depois da resposta e pode demorar (vários modelos, até 240 s).
+export const maxDuration = 300;
+
 type Item = { descricao: string; quantidade: number | null; preco_unitario: number | null; total: number | null };
 
 export default async function FaturaPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ ok?: string; erro?: string }> }) {
