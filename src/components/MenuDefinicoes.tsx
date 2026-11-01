@@ -1,10 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { estaInstalada } from "@/lib/instalar";
 
-type Aba = { id: string; nome: string };
+/** soNoBrowser: a secção só aparece quando a app não está instalada (some do menu quando está). */
+type Aba = { id: string; nome: string; soNoBrowser?: boolean };
+
+const semSubscricao = () => () => {};
 
 /** Menu das Definições: à direita e fixo no computador (destaca a secção visível); em linha no telemóvel. */
-export default function MenuDefinicoes({ abas }: { abas: Aba[] }) {
+export default function MenuDefinicoes({ abas: todas }: { abas: Aba[] }) {
+  const instalada = useSyncExternalStore(semSubscricao, estaInstalada, () => false);
+  const abas = useMemo(() => (instalada ? todas.filter((a) => !a.soNoBrowser) : todas), [instalada, todas]);
   const [ativa, setAtiva] = useState(abas[0]?.id);
 
   useEffect(() => {
