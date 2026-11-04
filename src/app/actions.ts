@@ -185,7 +185,7 @@ export async function lerOutraVez(id: number) {
     // PDF feito a partir de fotos: lê as fotos (a IA lê imagens melhor do que PDFs sem texto)
     try { const j = await jpegsDoPdf(fich!.dados); if (j.length) paginas = j.map((b) => ({ bytes: Buffer.from(b), mime: "image/jpeg" })); } catch { /* fica o PDF */ }
   }
-  await query("UPDATE faturas SET leitura = 'pendente' WHERE id = ?", [id]);
+  await query("UPDATE faturas SET leitura = 'pendente', leitura_em = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') WHERE id = ?", [id]);
   after(() => completarComIa(id, paginas).catch(() => query("UPDATE faturas SET leitura = 'falhou' WHERE id = ? AND leitura = 'pendente'", [id])));
   revalidatePath("/", "layout");
   volta("ok", "A ler a fatura outra vez… os dados aparecem dentro de instantes.");
@@ -217,9 +217,9 @@ async function aplicarCampos(user: { id: number }, id: number, antes: Record<str
   });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,
-       predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, alerta=? WHERE id=?`,
+       predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, tipo_doc=?, alerta=? WHERE id=?`,
     [depois.fornecedor, depois.nif_fornecedor, depois.numero, depois.data, depois.total, depois.iva, depois.categoria, depois.empresa_id,
-      depois.predio_id, depois.maquina_id, depois.identificador, depois.nif_adquirente, revisada, avisos.length ? avisos.join(" ") : null, id],
+      depois.predio_id, depois.maquina_id, depois.identificador, depois.nif_adquirente, revisada, depois.tipo_doc ?? null, avisos.length ? avisos.join(" ") : null, id],
   );
   const mudou = diferencas(antes, depois);
   if (Object.keys(mudou).length) await registar(user, id, "editada", mudou);
@@ -259,6 +259,8 @@ export async function guardarFatura(id: number, form: FormData) {
     fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
     total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
     predio_id: predioId, maquina_id: maquinaId, identificador, nif_adquirente: nifAdquirente, revisada: form.get("revisada") ? 1 : 0,
+    // Nota de crédito marcada à mão; sem a marca, mantém o tipo lido do QR (FT, FR, FS…) ou passa a fatura
+    tipo_doc: form.get("nota_credito") ? "NC" : antes.tipo_doc === "NC" ? "FT" : (antes.tipo_doc as string | null) ?? null,
   };
 
   if (!direto) {

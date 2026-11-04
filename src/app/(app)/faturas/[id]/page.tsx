@@ -128,6 +128,10 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
                   Memorizar este nº no prédio escolhido (liga as próximas faturas sozinho)
                 </label>
               )}
+              <label className="col-span-2 flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" name="nota_credito" defaultChecked={f.tipo_doc === "NC"} className="h-4 w-4" />
+                É uma nota de crédito (devolução ou desconto: conta a menos nos totais)
+              </label>
               <label className="col-span-2 flex items-center gap-2 text-sm font-medium">
                 <input type="checkbox" name="revisada" defaultChecked={!!f.revisada} className="h-4 w-4" /> Marcar como revista
               </label>

@@ -5,7 +5,7 @@ import { clientesAluguer, listarAlugueres, listarDocumentos, listarFaturas, maqu
 import { COR_PRAZO, ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, estadoPrazo, textoPrazo, type TipoDocumento } from "@/lib/prazos";
 import { empresaDoGrupo } from "@/lib/grupo";
 import { ESTADOS, ROTULO_ESTADO } from "@/lib/estados";
-import { COR_ESTADO, dataPt, money } from "@/lib/format";
+import { COR_ESTADO, dataPt, money, somaTotais } from "@/lib/format";
 import { apagarAluguer, apagarDocumento, apagarEntidade, atualizarMaquina, guardarAluguer, guardarDocumento, renovarDocumento, restaurarEntidade } from "@/app/actions";
 import ConfirmarBotao from "@/components/ConfirmarBotao";
 import { PageHeader, Stat, Vazio } from "@/components/Ui";
@@ -21,7 +21,7 @@ export default async function MaquinaPage({ params, searchParams }: { params: Pr
   if (!m) notFound();
   const [faturas, empresas, mesmaSerie, documentos, alugueres, clientes] = await Promise.all([
     listarFaturas(user, { maquina_id: m.id }), todasEmpresas(), maquinasComMesmaSerie(m), listarDocumentos({ maquinaId: m.id }), listarAlugueres(m.id), clientesAluguer()]);
-  const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
+  const total = somaTotais(faturas);
   const receitas = alugueres.reduce((s, a) => s + (a.valor ?? 0), 0);
   const resultado = receitas - total;
   const aqui = `/maquinas/${m.id}`;

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { FaturaRow } from "@/lib/queries";
-import { dataPt, money } from "@/lib/format";
+import { dataPt, eNotaCredito, money, valorComSinal } from "@/lib/format";
 import { CategoriaBadge, Vazio } from "./Ui";
 import { CLASSE_SEMAFORO, semaforo } from "@/lib/semaforo";
 import AtualizarSePendente from "./AtualizarSePendente";
@@ -25,13 +25,14 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                   <p className="truncate font-medium">{f.fornecedor ?? "Fatura sem nome"}</p>
                   <p className="text-xs text-slate-500">{dataPt(f.data)} · {f.numero ?? "sem nº"}</p>
                 </div>
-                <p className="shrink-0 font-semibold">{money(f.total)}</p>
+                <p className="shrink-0 font-semibold">{money(valorComSinal(f))}</p>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <CategoriaBadge categoria={f.categoria} />
                 {(f.predio_nome || f.maquina_numero) && <span className="text-xs text-slate-500">{f.predio_nome ?? `Máquina ${f.maquina_numero}`}</span>}
                 {f.empresa_nome && <span className="text-xs text-slate-400">· {f.empresa_nome}</span>}
                 {f.intragrupo && <span className="badge bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
+                {eNotaCredito(f) && <span className="badge bg-fuchsia-100 text-fuchsia-800" title="Nota de crédito: desconta nos totais">Nota de crédito</span>}
                 <Estado f={f} />
               </div>
             </Link>
@@ -53,13 +54,14 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                 <td className="px-4 py-3">
                   <Link href={`/faturas/${f.id}`} className="font-medium hover:text-brand-600">{f.fornecedor ?? "Fatura sem nome"}</Link>
                   <span className="ml-2 text-xs text-slate-400">{f.numero}</span>{f.intragrupo && <span className="badge ml-2 bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
+                  {eNotaCredito(f) && <span className="badge ml-2 bg-fuchsia-100 text-fuchsia-800" title="Nota de crédito: desconta nos totais">Nota de crédito</span>}
                   {f.alerta && !f.revisada && <p className="mt-0.5 text-xs text-amber-700">{f.alerta}</p>}
                 </td>
                 <td className="px-4 py-3"><Estado f={f} /></td>
                 <td className="px-4 py-3"><CategoriaBadge categoria={f.categoria} /></td>
                 <td className="px-4 py-3 text-slate-600">{f.empresa_nome ?? "—"}</td>
                 <td className="px-4 py-3 text-slate-600">{f.predio_nome ?? (f.maquina_numero ? `Máquina ${f.maquina_numero}` : "—")}</td>
-                <td className="px-4 py-3 text-right font-medium">{money(f.total)}</td>
+                <td className="px-4 py-3 text-right font-medium">{money(valorComSinal(f))}</td>
               </tr>
             ))}
           </tbody>
