@@ -2,8 +2,8 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, opcoesMaquinas, todosPredios } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/categorias";
-import { money } from "@/lib/format";
-import { aceitarProposta, apagarFatura, guardarFatura, lerOutraVez, rejeitarProposta } from "@/app/actions";
+import { dataPt, hojeLisboa, money } from "@/lib/format";
+import { aceitarProposta, apagarFatura, guardarFatura, lerOutraVez, marcarPaga, marcarPorPagar, rejeitarProposta } from "@/app/actions";
 import { editaDireto } from "@/lib/auth";
 import ConfirmarBotao from "@/components/ConfirmarBotao";
 import DiffLista from "@/components/Diff";
@@ -45,6 +45,9 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
           {f.qr_lido ? <span className="badge bg-emerald-100 text-emerald-800" title={f.atcud ?? undefined}>QR fiscal lido{f.atcud ? ` · ${f.atcud}` : ""}</span> : null}
           {(() => { const e = semaforo(f); return <span className={`badge ${CLASSE_SEMAFORO[e.cor]}`}>{e.texto}</span>; })()}
           {f.enviada_em && <span className="badge bg-sky-100 text-sky-800">Enviada à contabilidade</span>}
+          {f.tipo_doc !== "NC" && (f.paga_em
+            ? <span className="badge bg-emerald-100 text-emerald-800">Paga</span>
+            : <span className="badge bg-orange-100 text-orange-800">Por pagar</span>)}
         </PageHeader></div>
 
       {sp.ok && <p className="mb-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">{sp.ok}</p>}
@@ -86,6 +89,8 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
         </div>
 
         <div className="space-y-6">
+          {f.tipo_doc !== "NC" && <Pagamento f={f} direto={direto} />}
+
           <form action={guardarFatura.bind(null, f.id)} className="card space-y-4 p-5">
             <fieldset className="grid grid-cols-2 gap-4">
               <Campo nome="fornecedor" rotulo="Fornecedor" v={f.fornecedor} span />
@@ -173,6 +178,48 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
       <h2 className="mb-3 mt-10 text-lg font-semibold">Histórico desta fatura</h2>
       <HistoricoLista registos={registos} nomes={nomes} podeDesfazer={direto} mostrarFatura={false} />
     </>
+  );
+}
+
+/** Estado do pagamento: marcar como paga (com data) e associar o recibo. */
+function Pagamento({ f, direto }: { f: { id: number; paga_em: string | null; recibo_id: number | null; recibo_mime: string | null; tipo_doc: string | null }; direto: boolean }) {
+  const paga = !!f.paga_em;
+  return (
+    <section className={`card space-y-3 p-5 ${paga ? "" : "border-orange-200"}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">Pagamento</h2>
+        {paga
+          ? <span className="badge bg-emerald-100 text-emerald-800">Paga em {dataPt(f.paga_em)}</span>
+          : <span className="badge bg-orange-100 text-orange-800">Por pagar</span>}
+      </div>
+      {f.recibo_id ? (
+        <p className="text-sm">
+          <a href={`/api/recibo/${f.id}`} target="_blank" rel="noopener" className="font-medium text-brand-600 hover:underline">
+            Ver recibo{f.recibo_mime === "application/pdf" ? " (PDF)" : ""}
+          </a>
+        </p>
+      ) : paga ? (
+        <p className="text-sm text-slate-500">{f.tipo_doc === "FR" ? "Fatura-recibo: o próprio documento é o recibo." : "Ainda sem recibo associado."}</p>
+      ) : null}
+      {direto && (
+        <form action={marcarPaga.bind(null, f.id)} className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Data do pagamento</label>
+            <input type="date" name="paga_em" defaultValue={f.paga_em ?? hojeLisboa()} className="field" />
+          </div>
+          <div>
+            <label className="label">{f.recibo_id ? "Trocar o recibo (opcional)" : "Recibo (opcional)"}</label>
+            <input type="file" name="recibo" accept="image/*,application/pdf" className="field py-1.5 text-sm" />
+          </div>
+          <button className="btn-primary sm:col-span-2">{paga ? "Guardar pagamento" : "Marcar como paga"}</button>
+        </form>
+      )}
+      {direto && paga && (
+        <form action={marcarPorPagar.bind(null, f.id)}>
+          <button className="btn-ghost px-3 py-1.5 text-sm">Voltar a pôr por pagar</button>
+        </form>
+      )}
+    </section>
   );
 }
 

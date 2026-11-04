@@ -5,6 +5,13 @@ import { CategoriaBadge, Vazio } from "./Ui";
 import { CLASSE_SEMAFORO, semaforo } from "@/lib/semaforo";
 import AtualizarSePendente from "./AtualizarSePendente";
 
+function Pagamento({ f }: { f: FaturaRow }) {
+  if (eNotaCredito(f)) return null;
+  return f.paga_em
+    ? <span className="badge bg-emerald-50 text-emerald-700" title={`Paga em ${dataPt(f.paga_em)}`}>Paga</span>
+    : <span className="badge bg-orange-100 text-orange-800">Por pagar</span>;
+}
+
 function Estado({ f }: { f: FaturaRow }) {
   const s = semaforo(f);
   return <span className={`badge ${CLASSE_SEMAFORO[s.cor]}`}>{s.texto}</span>;
@@ -34,6 +41,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                 {f.intragrupo && <span className="badge bg-indigo-100 text-indigo-800" title="O fornecedor é outra empresa do grupo">Intragrupo</span>}
                 {eNotaCredito(f) && <span className="badge bg-fuchsia-100 text-fuchsia-800" title="Nota de crédito: desconta nos totais">Nota de crédito</span>}
                 <Estado f={f} />
+                <Pagamento f={f} />
               </div>
             </Link>
           </li>
@@ -44,8 +52,8 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
       <div className="card hidden overflow-hidden md:block">
         <table className="w-full text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-            <tr>{["Data", "Fornecedor", "Estado", "Categoria", "Empresa", "Prédio / Máquina", "Total"].map((h, i) => (
-              <th key={h} className={`px-4 py-3 font-medium ${i === 6 ? "text-right" : ""}`}>{h}</th>))}</tr>
+            <tr>{["Data", "Fornecedor", "Estado", "Pagamento", "Categoria", "Empresa", "Prédio / Máquina", "Total"].map((h, i) => (
+              <th key={h} className={`px-4 py-3 font-medium ${i === 7 ? "text-right" : ""}`}>{h}</th>))}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {faturas.map((f) => (
@@ -58,6 +66,7 @@ export default function FaturasLista({ faturas }: { faturas: FaturaRow[] }) {
                   {f.alerta && !f.revisada && <p className="mt-0.5 text-xs text-amber-700">{f.alerta}</p>}
                 </td>
                 <td className="px-4 py-3"><Estado f={f} /></td>
+                <td className="px-4 py-3"><Pagamento f={f} /></td>
                 <td className="px-4 py-3"><CategoriaBadge categoria={f.categoria} /></td>
                 <td className="px-4 py-3 text-slate-600">{f.empresa_nome ?? "—"}</td>
                 <td className="px-4 py-3 text-slate-600">{f.predio_nome ?? (f.maquina_numero ? `Máquina ${f.maquina_numero}` : "—")}</td>
