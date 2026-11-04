@@ -3,14 +3,20 @@ import { lerConfig } from "@/lib/config";
 import { lerSmtp } from "@/lib/email";
 import { FREQUENCIAS, TIPOS_ALERTA, lerDefinicoesAlertas, type TipoAlerta } from "@/lib/alertas-email";
 import { dataHoraPt } from "@/lib/format";
-import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
+import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarModelosIa, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
 import FormSenha from "@/components/FormSenha";
+import SeletorModelo from "@/components/SeletorModelo";
+import { nomeFornecedorIa } from "@/lib/extract";
+import { LISTA_TAREFAS, MODELOS_SUGERIDOS, TAREFAS_IA, modelosDaTarefa, nomeModelo, type OrigemModelo } from "@/lib/modelos-ia";
 import MenuDefinicoes from "@/components/MenuDefinicoes";
+import InstalarApp from "@/components/InstalarApp";
 import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
 import Link from "next/link";
 
 const CARGO: Record<string, string> = { admin: "Administrador (faz tudo)", operador: "Operador (carrega e edita)", contabilista: "Contabilista (propõe edições; o admin aceita)" };
+
+const ORIGEM: Record<OrigemModelo, string> = { definicoes: "escolhido aqui", vercel: "da Vercel", padrao: "predefinição", desligado: "desligada aqui" };
 
 function Seccao({ id, titulo, desc, children }: { id: string; titulo: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -31,10 +37,14 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
     Promise.all(["smtp_host", "smtp_port", "smtp_user", "smtp_from", "smtp_pass", "email_contabilidade"].map(lerConfig)),
   ]);
   const [host, porta, smtpUser, from, pass, emailConta] = cfg;
+  const ia = admin
+    ? await Promise.all(LISTA_TAREFAS.map(async (t) => ({ t, guardado: (await lerConfig(`ia_modelo_${t}`)) ?? "", ...(await modelosDaTarefa(t)) })))
+    : [];
+  const fornecedorIa = nomeFornecedorIa();
   const viaAmbiente = smtp?.origem === "ambiente";
   const abas = [
-    { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" },
-    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
+    { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" }, { id: "app", nome: "App no telemóvel", soNoBrowser: true },
+    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "modelos-ia", nome: "Modelos de IA" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
   ];
 
   return (
@@ -58,6 +68,8 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
         <Seccao id="seguranca" titulo="Palavra-passe" desc="Escolha uma palavra-passe que só você conheça. Ao mudar, as outras sessões abertas (noutros aparelhos) terminam.">
           <FormSenha />
         </Seccao>
+
+        <InstalarApp id="app" />
 
         {admin && (
           <Seccao id="alertas" titulo="Alertas por email" desc="Quem recebe um email com o que precisa de atenção. O envio automático é feito de manhã (cerca das 8h).">
@@ -120,6 +132,40 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
             <form action={guardarEmailContabilidade} className="flex flex-col gap-2 sm:flex-row">
               <input name="emails" defaultValue={emailConta ?? ""} placeholder="email da contabilista" className="field" />
               <button className="btn-primary shrink-0">Guardar</button>
+            </form>
+          </Seccao>
+        )}
+
+        {admin && (
+          <Seccao id="modelos-ia" titulo="Modelos de IA" desc="Escolha que modelo faz cada tarefa. A mudança vale logo para as próximas faturas, sem mexer na Vercel. As chaves de acesso continuam guardadas só na Vercel.">
+            <p className={`mb-4 rounded-lg p-3 text-sm ${fornecedorIa ? "bg-emerald-50 text-emerald-800" : "bg-amber-50 text-amber-900"}`}>
+              {fornecedorIa === "openrouter" && "Ligado ao OpenRouter: pode escolher modelos de várias empresas (Claude, Gemini, GPT…)."}
+              {fornecedorIa === "anthropic" && "Ligado diretamente à Anthropic: só os modelos Claude funcionam; outro modelo escolhido aqui é trocado pelo Claude Opus 5.5."}
+              {!fornecedorIa && "A leitura por IA não está ligada: falta a chave OPENROUTER_API_KEY (ou ANTHROPIC_API_KEY) na Vercel. Pode escolher os modelos na mesma."}
+            </p>
+            <form action={guardarModelosIa} className="space-y-5">
+              {ia.map(({ t, guardado, modelos, origem }) => {
+                const tarefa = TAREFAS_IA[t];
+                const daVercel = process.env[tarefa.env];
+                const padrao = daVercel ? `Predefinição da Vercel (${daVercel.split(",")[0].trim()})` : t === "leitura" ? "Predefinição (modelos gratuitos, só para testes)" : t === "leitura_forte" ? "Predefinição (sem 2.ª leitura)" : "Predefinição (nenhum)";
+                return (
+                  <div key={t} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] sm:gap-4">
+                    <div>
+                      <p className="text-sm font-medium">
+                        {tarefa.nome}
+                        {!tarefa.emUso && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600">ainda não existe na app</span>}
+                      </p>
+                      <p className="mt-0.5 text-xs text-slate-500">{tarefa.desc}</p>
+                      <p className="mt-1 text-xs text-slate-600">Agora: {modelos.length ? modelos.map(nomeModelo).join(", então ") : "nenhum"} <span className="text-slate-400">({ORIGEM[origem]})</span></p>
+                    </div>
+                    <SeletorModelo tarefa={t} atual={guardado} opcoes={MODELOS_SUGERIDOS} padrao={padrao} podeDesligar={t === "leitura_forte"} />
+                  </div>
+                );
+              })}
+              <div className="flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+                <button className="btn-primary">Guardar modelos</button>
+                <span className="text-xs text-slate-500">Ao guardar, a app confirma no OpenRouter que o modelo existe e (para faturas) que lê imagens.</span>
+              </div>
             </form>
           </Seccao>
         )}

@@ -10,15 +10,30 @@ import { PageHeader, Stat } from "@/components/Ui";
 import { LembrarLista } from "@/components/Voltar";
 import { Suspense } from "react";
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string }> }) {
+// Faturas por página na lista (com 700 a 2000 por mês, mostrar tudo de uma vez tornava a página lenta e escondia as antigas)
+const POR_PAGINA = 100;
+
+export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string; pagina?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
   const empresaId = Number(sp.empresa) || undefined;
   const mes = sp.mes && /^\d{4}-(0[1-9]|1[0-2])$/.test(sp.mes) ? sp.mes : undefined;
-  const [faturas, r, empresas] = await Promise.all([
-    listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1", empresa_id: empresaId, mes }), resumo(user), todasEmpresas(),
+  const pagina = Math.max(1, Math.floor(Number(sp.pagina) || 1));
+  const [lidas, r, empresas] = await Promise.all([
+    // Pede uma a mais para saber se há página seguinte
+    listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1", empresa_id: empresaId, mes, limite: POR_PAGINA + 1, saltar: (pagina - 1) * POR_PAGINA }),
+    resumo(user), todasEmpresas(),
   ]);
+  const haMais = lidas.length > POR_PAGINA;
+  const faturas = lidas.slice(0, POR_PAGINA);
   const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q, empresa: empresaId ? String(empresaId) : undefined, mes }).filter(([, v]) => v) as [string, string][]).toString();
+  const ligacaoPagina = (n: number) => {
+    const p = new URLSearchParams(qs);
+    if (sp.alerta === "1") p.set("alerta", "1");
+    if (n > 1) p.set("pagina", String(n));
+    const s = p.toString();
+    return s ? `/?${s}` : "/";
+  };
 
   return (
     <>
@@ -61,6 +76,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
       </form>
 
       <FaturasLista faturas={faturas} />
+
+      {(pagina > 1 || haMais) && (
+        <nav className="mt-6 flex items-center justify-between gap-3 text-sm" aria-label="Páginas">
+          {pagina > 1 ? <Link href={ligacaoPagina(pagina - 1)} className="btn-ghost">← Mais recentes</Link> : <span />}
+          <span className="text-slate-500">Página {pagina} · faturas {(pagina - 1) * POR_PAGINA + 1} a {(pagina - 1) * POR_PAGINA + faturas.length}</span>
+          {haMais ? <Link href={ligacaoPagina(pagina + 1)} className="btn-ghost">Mais antigas →</Link> : <span />}
+        </nav>
+      )}
     </>
   );
 }

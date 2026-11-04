@@ -3,7 +3,7 @@ import { editaDireto, requireUser } from "@/lib/auth";
 import { lerConfig } from "@/lib/config";
 import { faturasDoPacote, lerFiltro, paraQuery } from "@/lib/contabilidade";
 import { emailConfigurado } from "@/lib/email";
-import { dataPt, mesExtenso, money } from "@/lib/format";
+import { dataPt, mesExtenso, money, somaTotais, valorComSinal } from "@/lib/format";
 import { todasEmpresas } from "@/lib/queries";
 import { marcarEnviadas, enviarContabilidade } from "@/app/actions";
 import { PageHeader, Stat } from "@/components/Ui";
@@ -14,7 +14,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
   const filtro = lerFiltro(sp);
   const [faturas, empresas, emailGuardado] = await Promise.all([faturasDoPacote(user, filtro), todasEmpresas(), lerConfig("email_contabilidade")]);
 
-  const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
+  const total = somaTotais(faturas);
   const porRever = faturas.filter((f) => f.alerta && !f.revisada).length;
   const semFicheiro = faturas.filter((f) => !f.ficheiro_id).length;
   const empresa = empresas.find((e) => e.id === filtro.empresaId);
@@ -68,7 +68,7 @@ export default async function Contabilidade({ searchParams }: { searchParams: Pr
                 <td className="px-4 py-2"><Link href={`/faturas/${f.id}`} className="hover:text-brand-600">{f.fornecedor ?? "Sem nome"}</Link> <span className="text-xs text-slate-400">{f.numero}</span></td>
                 <td className="px-4 py-2 text-slate-600">{f.empresa_nome ?? "—"}</td>
                 <td className="px-4 py-2 text-slate-600">{f.enviada_em ? f.enviada_em.slice(0, 10) : "—"}</td>
-                <td className="px-4 py-2 text-right font-medium">{money(f.total)}</td>
+                <td className="px-4 py-2 text-right font-medium">{money(valorComSinal(f))}</td>
               </tr>
             ))}
             {!faturas.length && <tr><td colSpan={5} className="p-6 text-center text-slate-500">Não há faturas neste período.</td></tr>}

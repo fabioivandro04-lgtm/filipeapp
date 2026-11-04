@@ -12,12 +12,13 @@ import { carregarFicheiro, faturasDoPacote, lerFiltro, marcarComoEnviadas, paraQ
 import { emailConfigurado, enviarEmail, listaEmails, type Anexo } from "@/lib/email";
 import { enviarAlertas, FREQUENCIAS, guardarDefinicoesAlertas, lerDefinicoesAlertas, TIPOS_ALERTA, type Frequencia, type TipoAlerta } from "@/lib/alertas-email";
 import { excelFaturas, nomeFicheiro } from "@/lib/excel";
-import { guardarConfig } from "@/lib/config";
+import { guardarConfig, lerConfig } from "@/lib/config";
 import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
 import { nifValido } from "@/lib/nif";
 import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extracaoDisponivel, type Pagina } from "@/lib/extract";
+import { conferirModelos, DESLIGADO, idValido, LISTA_TAREFAS, listaModelos, TAREFAS_IA, type TarefaIa } from "@/lib/modelos-ia";
 import { avisosFatura, completarComIa } from "@/lib/leitura-ia";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 import { fotosParaPdf, imagemConvertivel, jpegsDoPdf } from "@/lib/pdf";
@@ -185,7 +186,7 @@ export async function lerOutraVez(id: number) {
     // PDF feito a partir de fotos: lê as fotos (a IA lê imagens melhor do que PDFs sem texto)
     try { const j = await jpegsDoPdf(fich!.dados); if (j.length) paginas = j.map((b) => ({ bytes: Buffer.from(b), mime: "image/jpeg" })); } catch { /* fica o PDF */ }
   }
-  await query("UPDATE faturas SET leitura = 'pendente' WHERE id = ?", [id]);
+  await query("UPDATE faturas SET leitura = 'pendente', leitura_em = to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') WHERE id = ?", [id]);
   after(() => completarComIa(id, paginas).catch(() => query("UPDATE faturas SET leitura = 'falhou' WHERE id = ? AND leitura = 'pendente'", [id])));
   revalidatePath("/", "layout");
   volta("ok", "A ler a fatura outra vez… os dados aparecem dentro de instantes.");
@@ -217,9 +218,9 @@ async function aplicarCampos(user: { id: number }, id: number, antes: Record<str
   });
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?,
-       predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, alerta=? WHERE id=?`,
+       predio_id=?, maquina_id=?, identificador=?, nif_adquirente=?, revisada=?, tipo_doc=?, alerta=? WHERE id=?`,
     [depois.fornecedor, depois.nif_fornecedor, depois.numero, depois.data, depois.total, depois.iva, depois.categoria, depois.empresa_id,
-      depois.predio_id, depois.maquina_id, depois.identificador, depois.nif_adquirente, revisada, avisos.length ? avisos.join(" ") : null, id],
+      depois.predio_id, depois.maquina_id, depois.identificador, depois.nif_adquirente, revisada, depois.tipo_doc ?? null, avisos.length ? avisos.join(" ") : null, id],
   );
   const mudou = diferencas(antes, depois);
   if (Object.keys(mudou).length) await registar(user, id, "editada", mudou);
@@ -259,6 +260,8 @@ export async function guardarFatura(id: number, form: FormData) {
     fornecedor: txt(form.get("fornecedor")), nif_fornecedor: txt(form.get("nif")), numero: txt(form.get("numero")), data: txt(form.get("data")),
     total: num(form.get("total")), iva: num(form.get("iva")), categoria: String(form.get("categoria")), empresa_id: empresaId,
     predio_id: predioId, maquina_id: maquinaId, identificador, nif_adquirente: nifAdquirente, revisada: form.get("revisada") ? 1 : 0,
+    // Nota de crédito marcada à mão; sem a marca, mantém o tipo lido do QR (FT, FR, FS…) ou passa a fatura
+    tipo_doc: form.get("nota_credito") ? "NC" : antes.tipo_doc === "NC" ? "FT" : (antes.tipo_doc as string | null) ?? null,
   };
 
   if (!direto) {
@@ -916,6 +919,38 @@ export async function testarEmail() {
     voltarDefinicoes("erro", `O envio falhou: ${(e as Error).message}`, "email");
   }
   voltarDefinicoes("ok", `Email de teste enviado para ${para.join(", ")}.`, "email");
+}
+
+/** Modelo de IA de cada tarefa. Vazio: fica o da Vercel (AI_MODEL…); «-»: desligado (só para a 2.ª leitura). As chaves não passam por aqui. */
+export async function guardarModelosIa(form: FormData) {
+  const u = await adminOuSai();
+  // Primeiro confere tudo, para não guardar só metade se uma tarefa tiver erro
+  const valores: [TarefaIa, string][] = [];
+  for (const t of LISTA_TAREFAS) {
+    const escolha = String(form.get(`modelo_${t}`) ?? "").trim();
+    let valor: string;
+    if (escolha === "" || (escolha === DESLIGADO && t === "leitura_forte")) valor = escolha;
+    else {
+      const ids = listaModelos(escolha === "outro" ? String(form.get(`outro_${t}`) ?? "") : escolha);
+      if (!ids.length) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: escreva o nome do modelo (p. ex. anthropic/claude-sonnet-5.5).`, "modelos-ia");
+      const mau = ids.find((id) => !idValido(id));
+      if (mau) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: «${mau}» não parece um modelo do OpenRouter (forma empresa/modelo).`, "modelos-ia");
+      const problema = await conferirModelos(ids, TAREFAS_IA[t].imagens);
+      if (problema) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: ${problema}`, "modelos-ia");
+      valor = ids.join(",");
+    }
+    valores.push([t, valor]);
+  }
+  const mudancas: string[] = [];
+  for (const [t, valor] of valores) {
+    const antes = await lerConfig(`ia_modelo_${t}`);
+    if ((antes ?? "") === valor) continue;
+    await guardarConfig(`ia_modelo_${t}`, valor);
+    mudancas.push(`${TAREFAS_IA[t].nome} → ${valor === "" ? "o da Vercel" : valor === DESLIGADO ? "desligada" : valor}`);
+  }
+  if (mudancas.length) await registar(u, null, "definicoes_ia", { resumo: mudancas.join("; ") });
+  revalidatePath("/definicoes");
+  voltarDefinicoes("ok", mudancas.length ? "Modelos de IA guardados. As próximas leituras já os usam." : "Nada mudou.", "modelos-ia");
 }
 
 export async function guardarEmailContabilidade(form: FormData) {

@@ -28,7 +28,7 @@ const ACAO: Record<string, string> = {
   revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
   sessao_entrou: "entrou na app", sessao_saiu: "saiu da app", utilizador_cargo: "mudou o cargo de", utilizador_senha: "redefiniu a palavra-passe de",
   utilizador_senha_propria: "alterou a própria palavra-passe", perfil_alterado: "mudou o nome:", definicoes_alertas: "alterou os alertas por email:",
-  definicoes_email: "alterou o servidor de email:", definicoes_contabilidade: "alterou o email da contabilidade:", alertas_enviados: "enviou os alertas por email:", documento_renovada: "renovou o prazo de",
+  definicoes_email: "alterou o servidor de email:", definicoes_contabilidade: "alterou o email da contabilidade:", definicoes_ia: "mudou os modelos de IA:", alertas_enviados: "enviou os alertas por email:", documento_renovada: "renovou o prazo de",
 };
 
 export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarFatura }: { registos: Registo[]; nomes: Nomes; podeDesfazer: boolean; mostrarFatura: boolean }) {

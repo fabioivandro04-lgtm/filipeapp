@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { listarFaturas, todosPredios, totaisPorMes } from "@/lib/queries";
-import { money } from "@/lib/format";
+import { money, somaTotais } from "@/lib/format";
 import FaturasLista from "@/components/FaturasLista";
 import { PageHeader, Stat } from "@/components/Ui";
 import { apagarEntidade, atualizarPredio, restaurarEntidade } from "@/app/actions";
@@ -15,8 +15,8 @@ export default async function PredioPage({ params, searchParams }: { params: Pro
   const p = (await todosPredios(true)).find((x) => x.id === Number(id)); // inclui apagados, para os links antigos continuarem a abrir
   if (!p) notFound();
   const [faturas, meses] = await Promise.all([listarFaturas(user, { predio_id: p.id }), totaisPorMes(user, p.id)]);
-  const total = faturas.reduce((s, f) => s + (f.total ?? 0), 0);
-  const por = (cat: string) => faturas.filter((f) => f.categoria === cat).reduce((s, f) => s + (f.total ?? 0), 0);
+  const total = somaTotais(faturas);
+  const por = (cat: string) => somaTotais(faturas.filter((f) => f.categoria === cat));
 
   // agrupa por mês: { "2026-09": { agua: x, energia: y, outros: z } }
   const tabela = new Map<string, { agua: number; energia: number; outros: number }>();
