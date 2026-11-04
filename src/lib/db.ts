@@ -140,6 +140,15 @@ const SCHEMA = `
     END IF;
   END $$;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS recibo_id INTEGER REFERENCES ficheiros(id) ON DELETE SET NULL;
+  -- Programa de faturação para onde vão as compras de cada empresa (moloni | wintouch | vazio = nenhum)
+  ALTER TABLE empresas ADD COLUMN IF NOT EXISTS faturacao TEXT;
+  -- Destino de cada fatura: vazio = o da empresa; moloni | wintouch | nenhum = escolhido na fatura.
+  -- destino_feito: programa onde já foi lançada (com destino_ref = nº do documento lá); destino_erro: último erro ao enviar.
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS destino TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS destino_feito TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS destino_ref TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS destino_em TEXT;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS destino_erro TEXT;
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS historico (
     id SERIAL PRIMARY KEY,

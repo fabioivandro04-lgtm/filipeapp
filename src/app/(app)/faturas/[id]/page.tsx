@@ -2,8 +2,9 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { carregarNomes, listarPropostas, obterFatura, todasEmpresas, opcoesMaquinas, todosPredios } from "@/lib/queries";
 import { CATEGORIAS } from "@/lib/categorias";
-import { dataPt, hojeLisboa, money } from "@/lib/format";
-import { aceitarProposta, apagarFatura, guardarFatura, lerOutraVez, marcarPaga, marcarPorPagar, rejeitarProposta } from "@/app/actions";
+import { dataHoraPt, dataPt, hojeLisboa, money } from "@/lib/format";
+import { aceitarProposta, anularLancamento, apagarFatura, enviarParaMoloni, guardarDestinoFatura, guardarFatura, lerOutraVez, marcarLancadaWintouch, marcarPaga, marcarPorPagar, rejeitarProposta } from "@/app/actions";
+import { PROGRAMAS, type Programa } from "@/lib/moloni";
 import { editaDireto } from "@/lib/auth";
 import ConfirmarBotao from "@/components/ConfirmarBotao";
 import DiffLista from "@/components/Diff";
@@ -90,6 +91,7 @@ export default async function FaturaPage({ params, searchParams }: { params: Pro
 
         <div className="space-y-6">
           {f.tipo_doc !== "NC" && <Pagamento f={f} direto={direto} />}
+          <ProgramaFaturacao f={f} direto={direto} />
 
           <form action={guardarFatura.bind(null, f.id)} className="card space-y-4 p-5">
             <fieldset className="grid grid-cols-2 gap-4">
@@ -217,6 +219,69 @@ function Pagamento({ f, direto }: { f: { id: number; paga_em: string | null; rec
       {direto && paga && (
         <form action={marcarPorPagar.bind(null, f.id)}>
           <button className="btn-ghost px-3 py-1.5 text-sm">Voltar a pôr por pagar</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+/** Para que programa de faturação vai esta fatura (o da empresa, ou outro só para ela) e se já lá foi lançada. */
+function ProgramaFaturacao({ f, direto }: { f: { id: number; destino: string | null; empresa_faturacao: string | null; empresa_nome: string | null; destino_feito: string | null; destino_ref: string | null; destino_em: string | null; destino_erro: string | null }; direto: boolean }) {
+  const efetivo = (f.destino ?? f.empresa_faturacao ?? "nenhum") as Programa | "nenhum";
+  const nomeEmpresa = f.empresa_faturacao ? PROGRAMAS[f.empresa_faturacao as Programa] ?? f.empresa_faturacao : "nenhum";
+  const feito = f.destino_feito as Programa | null;
+  return (
+    <section id="faturacao" className="card scroll-mt-20 space-y-3 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="font-semibold">Programa de faturação</h2>
+        {feito
+          ? <span className="badge bg-emerald-100 text-emerald-800">{feito === "moloni" && !f.destino_ref ? "A enviar para o Moloni…" : `Lançada no ${PROGRAMAS[feito] ?? feito}`}</span>
+          : efetivo !== "nenhum" ? <span className="badge bg-orange-100 text-orange-800">Por lançar no {PROGRAMAS[efetivo]}</span>
+          : <span className="badge bg-slate-100 text-slate-600">Não vai para nenhum programa</span>}
+      </div>
+      {feito && (
+        <p className="text-sm text-slate-600">
+          {feito === "moloni" && f.destino_ref ? `Criada no Moloni como rascunho (documento ${f.destino_ref})` : `Marcada como lançada`}
+          {f.destino_em ? ` em ${dataHoraPt(f.destino_em)}` : ""}.
+          {feito === "moloni" && " A contabilista confere e fecha-a no Moloni."}
+        </p>
+      )}
+      {!feito && f.destino_erro && efetivo === "moloni" && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">Último envio falhou: {f.destino_erro}</p>}
+      {direto && !feito && (
+        <>
+          <form action={guardarDestinoFatura.bind(null, f.id)} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <div className="flex-1">
+              <label className="label">Enviar para</label>
+              <select name="destino" defaultValue={f.destino ?? ""} className="field">
+                <option value="">O da empresa{f.empresa_nome ? ` (${f.empresa_nome}: ${nomeEmpresa})` : ` (${nomeEmpresa})`}</option>
+                {Object.entries(PROGRAMAS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                <option value="nenhum">Nenhum</option>
+              </select>
+            </div>
+            <button className="btn-ghost shrink-0 px-3 py-2 text-sm">Guardar destino</button>
+          </form>
+          {efetivo === "moloni" && (
+            <form action={enviarParaMoloni.bind(null, f.id)}>
+              <button className="btn-primary w-full">Enviar para o Moloni (rascunho)</button>
+              <p className="mt-1 text-xs text-slate-500">Confira primeiro o fornecedor, o NIF, a data, o total e o IVA. Usa a ligação ao Moloni da empresa da fatura.</p>
+            </form>
+          )}
+          {efetivo === "wintouch" && (
+            <form action={marcarLancadaWintouch.bind(null, f.id)}>
+              <button className="btn-primary w-full">Já está lançada no WinTouch</button>
+              <p className="mt-1 text-xs text-slate-500">O WinTouch ainda não tem ligação automática: lance-a lá e marque aqui, para saber o que falta.</p>
+            </form>
+          )}
+        </>
+      )}
+      {direto && feito === "moloni" && (
+        <form action={anularLancamento.bind(null, f.id)}>
+          <ConfirmarBotao className="btn-ghost px-3 py-1.5 text-sm" mensagem="Anular o lançamento? A fatura volta a ficar por lançar. Se o documento ainda existir no programa, apague-o lá também.">Anular lançamento</ConfirmarBotao>
+        </form>
+      )}
+      {direto && feito === "wintouch" && (
+        <form action={anularLancamento.bind(null, f.id)}>
+          <ConfirmarBotao className="btn-ghost px-3 py-1.5 text-sm" mensagem="Voltar a pôr esta fatura por lançar no WinTouch?">Afinal não está lançada</ConfirmarBotao>
         </form>
       )}
     </section>

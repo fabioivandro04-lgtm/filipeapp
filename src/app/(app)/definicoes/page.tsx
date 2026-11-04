@@ -3,7 +3,9 @@ import { lerConfig } from "@/lib/config";
 import { lerSmtp } from "@/lib/email";
 import { FREQUENCIAS, TIPOS_ALERTA, lerDefinicoesAlertas, type TipoAlerta } from "@/lib/alertas-email";
 import { dataHoraPt } from "@/lib/format";
-import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarModelosIa, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
+import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarModelosIa, guardarPerfil, guardarProgramasFaturacao, guardarServidorEmail, testarEmail } from "@/app/actions";
+import { todasEmpresas } from "@/lib/queries";
+import { lerConta, ligada, PROGRAMAS, type ContaMoloni } from "@/lib/moloni";
 import FormSenha from "@/components/FormSenha";
 import SeletorModelo from "@/components/SeletorModelo";
 import { nomeFornecedorIa } from "@/lib/extract";
@@ -40,11 +42,13 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
   const ia = admin
     ? await Promise.all(LISTA_TAREFAS.map(async (t) => ({ t, guardado: (await lerConfig(`ia_modelo_${t}`)) ?? "", ...(await modelosDaTarefa(t)) })))
     : [];
+  const empresas = admin ? await todasEmpresas() : [];
+  const contasMoloni = new Map<number, ContaMoloni | null>(admin ? await Promise.all(empresas.filter((e) => e.faturacao === "moloni").map(async (e) => [e.id, await lerConta(e.id)] as const)) : []);
   const fornecedorIa = nomeFornecedorIa();
   const viaAmbiente = smtp?.origem === "ambiente";
   const abas = [
     { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" }, { id: "app", nome: "App no telemóvel", soNoBrowser: true },
-    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "modelos-ia", nome: "Modelos de IA" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
+    ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "faturacao", nome: "Programas de faturação" }, { id: "modelos-ia", nome: "Modelos de IA" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
   ];
 
   return (
@@ -133,6 +137,36 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
               <input name="emails" defaultValue={emailConta ?? ""} placeholder="email da contabilista" className="field" />
               <button className="btn-primary shrink-0">Guardar</button>
             </form>
+          </Seccao>
+        )}
+
+        {admin && (
+          <Seccao id="faturacao" titulo="Programas de faturação" desc="Para onde vão as compras de cada empresa. Em cada fatura aparece este destino já escolhido, e pode ser mudado só para essa fatura.">
+            {empresas.length === 0 ? <p className="text-sm text-slate-500">Ainda não há empresas.</p> : (
+              <form action={guardarProgramasFaturacao} className="space-y-3">
+                <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
+                  {empresas.map((e) => {
+                    const conta = contasMoloni.get(e.id) ?? null;
+                    return (
+                      <li key={e.id} className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center">
+                        <span className="min-w-0 flex-1 text-sm font-medium">{e.nome}</span>
+                        <select name={`faturacao_${e.id}`} defaultValue={e.faturacao ?? ""} className="field sm:w-40">
+                          <option value="">Nenhum</option>
+                          {Object.entries(PROGRAMAS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        </select>
+                        {e.faturacao === "moloni" && (
+                          <Link href={`/definicoes/moloni/${e.id}`} className={`shrink-0 text-xs font-medium hover:underline ${ligada(conta) ? "text-emerald-700" : "text-amber-700"}`}>
+                            {ligada(conta) ? "Moloni ligado · opções" : "Ligar ao Moloni"}
+                          </Link>
+                        )}
+                        {e.faturacao === "wintouch" && <span className="shrink-0 text-xs text-slate-500">Marca-se à mão quando é lançada</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button className="btn-primary">Guardar programas</button>
+              </form>
+            )}
           </Seccao>
         )}
 
