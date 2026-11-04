@@ -9,7 +9,10 @@ import { tirarCapturas } from "@/lib/capturas";
 import { dataPt, money } from "@/lib/format";
 import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
-import Camara from "@/components/Camara";
+import dynamic from "next/dynamic";
+
+// A câmara (e o leitor de QR) só é descarregada quando se abre: as outras páginas ficam mais leves
+const Camara = dynamic(() => import("@/components/Camara"), { ssr: false });
 
 const LIMITE_BYTES = 3.2 * 1024 * 1024; // abaixo dos 4,5 MB da Vercel, com folga para o resto do pedido
 
