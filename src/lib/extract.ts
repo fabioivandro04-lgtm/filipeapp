@@ -27,14 +27,15 @@ const Fatura = z.object({
   itens: z
     .array(z.object({ descricao: texto.transform((t) => t ?? ""), quantidade: numero, preco_unitario: numero, total: numero }))
     .catch([]),
+  nota_credito: z.preprocess((v) => v === true || v === "true", z.boolean()).catch(false).describe("true se o documento for uma nota de crédito"),
   duvidas: texto.describe("O que está ilegível ou incerto"),
 });
 export type FaturaExtraida = z.infer<typeof Fatura>;
 
-const PROMPT = `Lê esta fatura portuguesa e extrai os dados. Categorias: energia (eletricidade/gás), agua, contabilidade (serviços de contabilidade, impostos, seguros), predio (obras, condomínio, manutenção de prédios), maquinas (peças, pneus, filtros, combustível de máquinas), outros. Não inventes valores: usa null quando não estiver legível ou visível (a foto pode estar cortada) e descreve o problema em "duvidas". A "data" é a data de EMISSÃO da fatura, nunca a data limite de pagamento, o período de consumo nem a data de hoje.`;
+const PROMPT = `Lê esta fatura portuguesa e extrai os dados. Categorias: energia (eletricidade/gás), agua, combustivel (gasóleo, gasolina, AdBlue, de viaturas ou máquinas), maquinas (peças, pneus, filtros, óleos, reparações e oficina de máquinas ou viaturas), predio (obras, condomínio, manutenção de prédios), rendas (rendas e alugueres de espaços ou equipamentos), seguros (apólices e prémios de seguro), transportes (fretes, transportes, portagens, envios), comunicacoes (telefone, telemóvel, internet), contabilidade (serviços de contabilidade, impostos, taxas), outros. Não inventes valores: usa null quando não estiver legível ou visível (a foto pode estar cortada) e descreve o problema em "duvidas". A "data" é a data de EMISSÃO da fatura, nunca a data limite de pagamento, o período de consumo nem a data de hoje.`;
 
 const FORMATO_JSON = `Responde APENAS com um objeto JSON (sem texto antes ou depois, sem markdown) com estas chaves:
-{"fornecedor": string|null, "nif_fornecedor": string|null (9 dígitos, do emitente), "nif_cliente": string|null (9 dígitos, do cliente a quem a fatura é emitida), "numero": string|null (nº da fatura), "data": "YYYY-MM-DD"|null, "total": number|null (valor total com IVA, ponto decimal), "iva": number|null (valor do IVA), "categoria": "${CATEGORIAS.join('"|"')}", "identificador": string|null (nº de contador, CPE/CUI ou código de cliente), "morada_servico": string|null, "numero_interno_maquina": string|null, "itens": [{"descricao": string, "quantidade": number|null, "preco_unitario": number|null, "total": number|null}], "duvidas": string|null}`;
+{"fornecedor": string|null, "nif_fornecedor": string|null (9 dígitos, do emitente), "nif_cliente": string|null (9 dígitos, do cliente a quem a fatura é emitida), "numero": string|null (nº da fatura), "data": "YYYY-MM-DD"|null, "total": number|null (valor total com IVA, ponto decimal), "iva": number|null (valor do IVA), "categoria": "${CATEGORIAS.join('"|"')}", "identificador": string|null (nº de contador, CPE/CUI ou código de cliente), "morada_servico": string|null, "numero_interno_maquina": string|null, "itens": [{"descricao": string, "quantidade": number|null, "preco_unitario": number|null, "total": number|null}], "nota_credito": boolean (true só se o documento for uma NOTA DE CRÉDITO), "duvidas": string|null}`;
 
 export type Pagina = { bytes: Buffer; mime: string };
 

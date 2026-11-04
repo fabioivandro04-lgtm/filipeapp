@@ -7,7 +7,7 @@ import { hashPassword } from "./password";
 export const DATA_DIR = process.env.GESTAO_DATA_DIR ?? path.join(process.cwd(), "data");
 
 // Categorias e cargos da aplicação
-export const CATEGORIAS = ["energia", "agua", "contabilidade", "predio", "maquinas", "outros"] as const;
+export const CATEGORIAS = ["energia", "agua", "combustivel", "maquinas", "predio", "rendas", "seguros", "transportes", "comunicacoes", "contabilidade", "outros"] as const;
 export type Categoria = (typeof CATEGORIAS)[number];
 // admin: faz tudo · operador: carrega e edita · contabilista: vê tudo e propõe edições, que um admin tem de aceitar
 export const CARGOS = ["admin", "operador", "contabilista"] as const;
@@ -127,6 +127,8 @@ const SCHEMA = `
   -- Como os dados foram obtidos: qr, ia, manual; 'pendente' enquanto a IA lê em segundo plano; 'falhou' se a leitura não deu
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS leitura TEXT NOT NULL DEFAULT 'manual';
   UPDATE faturas SET leitura = 'qr' WHERE qr_lido = 1 AND leitura = 'manual';
+  -- Quando começou a leitura por IA (para dar por falhada uma leitura que o servidor cortou a meio)
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS leitura_em TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS enviada_em TEXT;
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);

@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import type { FaturaRow } from "./queries";
+import { somaTotais } from "./format";
 
 const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "application/pdf": "pdf" };
 /** As fotos são enviadas à contabilidade convertidas em PDF (ver carregarFicheiro). */
@@ -34,7 +35,7 @@ export async function excelFaturas(rows: FaturaRow[], prefixoFicheiro?: string):
   ws.views = [{ state: "frozen", ySplit: 1 }];
   for (const r of rows) ws.addRow({ ...r, ficheiro: prefixoFicheiro !== undefined && r.ficheiro_id ? prefixoFicheiro + nomeFicheiro(r) : "" });
   if (rows.length) {
-    const t = ws.addRow({ fornecedor: "TOTAL", total: rows.reduce((s, r) => s + (r.total ?? 0), 0), iva: rows.reduce((s, r) => s + (r.iva ?? 0), 0) });
+    const t = ws.addRow({ fornecedor: "TOTAL", total: somaTotais(rows), iva: rows.reduce((s, r) => s + (r.iva == null ? 0 : r.tipo_doc === "NC" ? -Math.abs(r.iva) : r.iva), 0) });
     t.font = { bold: true };
   }
   return Buffer.from(await wb.xlsx.writeBuffer());

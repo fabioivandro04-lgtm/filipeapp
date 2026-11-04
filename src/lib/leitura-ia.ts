@@ -106,9 +106,9 @@ export async function completarComIa(faturaId: number, paginas: Pagina[]): Promi
 
   await query(
     `UPDATE faturas SET fornecedor=?, nif_fornecedor=?, numero=?, data=?, total=?, iva=?, categoria=?, empresa_id=?, predio_id=?, maquina_id=?,
-       identificador=?, nif_adquirente=?, itens=COALESCE(itens, ?), alerta=?, leitura='ia' WHERE id=?`,
+       identificador=?, nif_adquirente=?, itens=COALESCE(itens, ?), alerta=?, tipo_doc=COALESCE(tipo_doc, ?), leitura='ia' WHERE id=?`,
     [fornecedor, nif, numero, data, total, iva, categoria, empresaId, predioId, maquinaId, identificador, nifCliente ?? null,
-      JSON.stringify(d.itens), notas.length ? notas.join(" ") : null, faturaId],
+      JSON.stringify(d.itens), notas.length ? notas.join(" ") : null, d.nota_credito ? "NC" : null, faturaId],
   );
   await registar(null, faturaId, "leitura_ia", { fornecedor, numero, total });
 }

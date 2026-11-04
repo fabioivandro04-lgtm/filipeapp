@@ -1,6 +1,7 @@
 import { query, queryOne, type Categoria } from "./db";
 import type { User } from "./auth";
 import { CAMPOS_EDITAVEIS } from "./historico";
+import { hojeLisboa, mesLisboa } from "./format";
 
 export type FaturaRow = {
   id: number; criado_em: string; criado_por_nome: string; fornecedor: string | null; nif_fornecedor: string | null;
@@ -22,9 +23,25 @@ const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.
   FROM faturas f JOIN users u ON u.id = f.criado_por
   LEFT JOIN predios p ON p.id = f.predio_id LEFT JOIN maquinas m ON m.id = f.maquina_id LEFT JOIN empresas e ON e.id = f.empresa_id`;
 
-export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean; pendentesEnvio?: boolean; limite?: number };
+export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean; pendentesEnvio?: boolean; limite?: number; saltar?: number };
+
+/** Leituras que passaram de 5 minutos já não vão terminar (o servidor cortou-as): passam a «falhou», para aparecerem em «Para rever». */
+export async function libertarLeiturasPresas(): Promise<void> {
+  await query(
+    `UPDATE faturas SET leitura = CASE WHEN qr_lido = 1 THEN 'qr' ELSE 'falhou' END,
+       alerta = CASE WHEN qr_lido = 1 AND fornecedor IS NOT NULL THEN alerta
+         ELSE TRIM(COALESCE(alerta, '') || ' A leitura automática não terminou: preencha à mão ou carregue em «Ler outra vez».') END
+     WHERE leitura = 'pendente' AND COALESCE(leitura_em, criado_em) < to_char(now() AT TIME ZONE 'UTC' - interval '5 minutes', 'YYYY-MM-DD HH24:MI:SS')`);
+}
+
+/**
+ * Valor com sinal para somas: as notas de crédito (devoluções e descontos) descontam, não são mais uma despesa.
+ * O total fica guardado como vem no documento (positivo); só nas contas é que conta a menos.
+ */
+export const VALOR = (alias = "f") => `(CASE WHEN ${alias}.tipo_doc = 'NC' THEN -ABS(${alias}.total) ELSE ${alias}.total END)`;
 
 export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<FaturaRow[]> {
+  await libertarLeiturasPresas();
   const v = visivel(u);
   const where = [v.sql];
   const args: (string | number)[] = [...v.args];
@@ -36,26 +53,28 @@ export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<Fatur
   if (filtro.mes) { where.push("substr(COALESCE(f.data,f.criado_em),1,7) = ?"); args.push(filtro.mes); }
   if (filtro.pendentesEnvio) where.push("f.enviada_em IS NULL");
   if (filtro.alerta) where.push(`f.revisada = 0 AND (f.alerta IS NOT NULL OR f.leitura IN ('ia','falhou'))`);
-  return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC LIMIT ${Math.min(filtro.limite ?? 500, 5000)}`, args);
+  return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC
+     LIMIT ${Math.min(filtro.limite ?? 500, 5000)} OFFSET ${Math.max(0, Math.floor(filtro.saltar ?? 0))}`, args);
 }
 
 export async function obterFatura(u: User, id: number): Promise<FaturaRow | undefined> {
+  await libertarLeiturasPresas();
   const v = visivel(u);
   return queryOne<FaturaRow>(`${SELECT} WHERE f.id = ? AND ${v.sql}`, [id, ...v.args]);
 }
 
 export async function resumo(u: User) {
   const v = visivel(u);
-  const mes = new Date().toISOString().slice(0, 7);
+  const mes = mesLisboa();
   const r = (await queryOne<{ n: number; total: number; mes: number; alertas: number }>(
-    `SELECT COUNT(*)::int AS n, COALESCE(SUM(total),0)::float8 AS total,
-       COALESCE(SUM(CASE WHEN substr(COALESCE(data,criado_em),1,7) = ? THEN total END),0)::float8 AS mes,
+    `SELECT COUNT(*)::int AS n, COALESCE(SUM(${VALOR()}),0)::float8 AS total,
+       COALESCE(SUM(CASE WHEN substr(COALESCE(data,criado_em),1,7) = ? THEN ${VALOR()} END),0)::float8 AS mes,
        COALESCE(SUM(CASE WHEN revisada = 0 AND (alerta IS NOT NULL OR leitura IN ('ia','falhou')) THEN 1 ELSE 0 END),0)::int AS alertas
      FROM faturas f WHERE ${v.sql}`,
     [mes, ...v.args],
   ))!;
   const porCategoria = await query<{ categoria: string; n: number; total: number }>(
-    `SELECT categoria, COUNT(*)::int AS n, COALESCE(SUM(total),0)::float8 AS total FROM faturas f WHERE ${v.sql} GROUP BY categoria ORDER BY total DESC`,
+    `SELECT categoria, COUNT(*)::int AS n, COALESCE(SUM(${VALOR()}),0)::float8 AS total FROM faturas f WHERE ${v.sql} GROUP BY categoria ORDER BY total DESC`,
     v.args,
   );
   return { ...r, porCategoria };
@@ -88,7 +107,7 @@ export const todasEmpresas = (incluirApagadas = false) => query<Empresa>(`SELECT
 export function prediosComTotais(u: User) {
   const v = visivel(u);
   return query<Predio & Totais>(
-    `SELECT p.*, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS total FROM predios p
+    `SELECT p.*, COUNT(f.id)::int AS n, COALESCE(SUM(${VALOR()}),0)::float8 AS total FROM predios p
      LEFT JOIN faturas f ON f.predio_id = p.id AND ${v.sql} WHERE p.apagada_em IS NULL GROUP BY p.id ORDER BY p.nome`,
     v.args,
   );
@@ -118,7 +137,7 @@ export async function listarMaquinas(u: User, f: FiltroMaquinas = {}) {
   const off = Math.max((f.pagina ?? 1) - 1, 0) * porPagina;
   const [linhas, total] = await Promise.all([
     query<Maquina & { empresa_nome: string | null; n: number; custo: number }>(
-      `SELECT m.*, e.nome AS empresa_nome, COUNT(f.id)::int AS n, COALESCE(SUM(f.total),0)::float8 AS custo
+      `SELECT m.*, e.nome AS empresa_nome, COUNT(f.id)::int AS n, COALESCE(SUM(${VALOR()}),0)::float8 AS custo
        FROM maquinas m LEFT JOIN empresas e ON e.id = m.empresa_id LEFT JOIN faturas f ON f.maquina_id = m.id AND ${v.sql}
        WHERE ${c.sql} GROUP BY m.id, e.nome ORDER BY m.numero_interno LIMIT ${porPagina} OFFSET ${off}`,
       [...v.args, ...c.args]),
@@ -167,7 +186,7 @@ export const maquinaPorNumero = (numero: string) =>
 export async function totaisPorMes(u: User, predioId: number) {
   const v = visivel(u);
   return query<{ mes: string; categoria: string; total: number }>(
-    `SELECT substr(COALESCE(data,criado_em),1,7) AS mes, categoria, COALESCE(SUM(total),0)::float8 AS total
+    `SELECT substr(COALESCE(data,criado_em),1,7) AS mes, categoria, COALESCE(SUM(${VALOR()}),0)::float8 AS total
      FROM faturas f WHERE predio_id = ? AND ${v.sql} GROUP BY 1, categoria ORDER BY mes DESC`,
     [predioId, ...v.args],
   );
@@ -180,14 +199,12 @@ const MES = "substr(COALESCE(f.data,f.criado_em),1,7)";
 export async function serieMensal(u: User, empresaId?: number) {
   const v = visivel(u);
   const rows = await query<{ mes: string; total: number; n: number }>(
-    `SELECT ${MES} AS mes, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
+    `SELECT ${MES} AS mes, COALESCE(SUM(${VALOR()}),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
      WHERE ${v.sql} ${empresaId ? "AND f.empresa_id = ?" : ""} GROUP BY 1`,
     [...v.args, ...(empresaId ? [empresaId] : [])],
   );
-  const hoje = new Date();
   return Array.from({ length: 12 }, (_, i) => {
-    const d = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - (11 - i), 1));
-    const mes = d.toISOString().slice(0, 7);
+    const mes = mesLisboa(i - 11);
     const r = rows.find((x) => x.mes === mes);
     return { mes, total: r?.total ?? 0, n: r?.n ?? 0 };
   });
@@ -196,7 +213,7 @@ export async function serieMensal(u: User, empresaId?: number) {
 export async function totaisPorEmpresa(u: User, mes?: string) {
   const v = visivel(u);
   return query<{ rotulo: string; total: number; n: number }>(
-    `SELECT COALESCE(e.nome,'Sem empresa') AS rotulo, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n
+    `SELECT COALESCE(e.nome,'Sem empresa') AS rotulo, COALESCE(SUM(${VALOR()}),0)::float8 AS total, COUNT(*)::int AS n
      FROM faturas f LEFT JOIN empresas e ON e.id = f.empresa_id
      WHERE ${v.sql} ${mes ? `AND ${MES} = ?` : ""} GROUP BY 1 ORDER BY total DESC`,
     [...v.args, ...(mes ? [mes] : [])],
@@ -206,7 +223,7 @@ export async function totaisPorEmpresa(u: User, mes?: string) {
 export async function totaisPorCategoria(u: User, mes?: string, empresaId?: number) {
   const v = visivel(u);
   return query<{ rotulo: string; total: number; n: number }>(
-    `SELECT f.categoria AS rotulo, COALESCE(SUM(f.total),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
+    `SELECT f.categoria AS rotulo, COALESCE(SUM(${VALOR()}),0)::float8 AS total, COUNT(*)::int AS n FROM faturas f
      WHERE ${v.sql} ${mes ? `AND ${MES} = ?` : ""} ${empresaId ? "AND f.empresa_id = ?" : ""} GROUP BY 1 ORDER BY total DESC`,
     [...v.args, ...(mes ? [mes] : []), ...(empresaId ? [empresaId] : [])],
   );
@@ -223,9 +240,8 @@ export async function mesesEmFalta(u: User) {
      WHERE f.categoria IN ('agua','energia') AND ${v.sql} GROUP BY 1,2,3 ORDER BY 1,2,3`,
     v.args,
   );
-  const hoje = new Date();
-  const passado = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
-  const limite = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 12, 1)).toISOString().slice(0, 7);
+  const passado = mesLisboa(-1);
+  const limite = mesLisboa(-12);
   const grupos = new Map<string, { predio: string; categoria: string; meses: Set<string> }>();
   for (const r of rows) {
     const k = `${r.predio}|${r.categoria}`;
@@ -344,7 +360,7 @@ export function listarDocumentos(f: { maquinaId?: number; empresaId?: number; ti
 
 /** Quantos documentos caducados ou a caducar nos próximos `dias` (só de máquinas que ainda não foram vendidas/abatidas). */
 export async function contarPrazos(dias = 30) {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeLisboa();
   const limite = new Date(Date.now() + dias * 86400000).toISOString().slice(0, 10);
   const r = await queryOne<{ caducados: number; urgentes: number }>(
     `SELECT COALESCE(SUM(CASE WHEN d.validade < ? THEN 1 ELSE 0 END),0)::int AS caducados,
@@ -375,7 +391,7 @@ export type LinhaRentabilidade = {
  * Os «12 meses» servem para ver a situação atual, não só o acumulado desde a compra.
  */
 export function rentabilidade(f: { empresaId?: number; estado?: string } = {}) {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const hoje = hojeLisboa();
   const ha12 = new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10);
   const where = ["m.apagada_em IS NULL"];
   const args: unknown[] = [ha12, hoje, ha12, ha12, hoje, hoje];
@@ -391,9 +407,9 @@ export function rentabilidade(f: { empresaId?: number; estado?: string } = {}) {
          MAX(inicio) AS ultimo
        FROM alugueres WHERE apagado_em IS NULL GROUP BY maquina_id),
      c AS (
-       SELECT maquina_id, COUNT(*)::int AS n, COALESCE(SUM(total),0)::float8 AS custos,
-         COALESCE(SUM(CASE WHEN COALESCE(data, substr(criado_em,1,10)) >= $4 THEN total ELSE 0 END),0)::float8 AS custos_12m
-       FROM faturas WHERE apagada_em IS NULL AND maquina_id IS NOT NULL GROUP BY maquina_id),
+       SELECT maquina_id, COUNT(*)::int AS n, COALESCE(SUM(${VALOR("fc")}),0)::float8 AS custos,
+         COALESCE(SUM(CASE WHEN COALESCE(data, substr(criado_em,1,10)) >= $4 THEN ${VALOR("fc")} ELSE 0 END),0)::float8 AS custos_12m
+       FROM faturas fc WHERE apagada_em IS NULL AND maquina_id IS NOT NULL GROUP BY maquina_id),
      agora AS (SELECT DISTINCT maquina_id FROM alugueres WHERE apagado_em IS NULL AND inicio <= $5 AND (fim IS NULL OR fim >= $6))
      SELECT m.id, m.numero_interno, m.descricao, m.estado, e.nome AS empresa_nome, m.valor_compra,
        COALESCE(a.receitas,0)::float8 AS receitas, COALESCE(c.custos,0)::float8 AS custos, COALESCE(a.n,0)::int AS n_alugueres, COALESCE(c.n,0)::int AS n_faturas,

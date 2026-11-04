@@ -4,13 +4,13 @@ import type { User } from "./auth";
 /** Campos de uma fatura que se podem editar (e, por isso, registar e reverter). */
 export const CAMPOS_EDITAVEIS = [
   "fornecedor", "nif_fornecedor", "numero", "data", "total", "iva", "categoria",
-  "empresa_id", "predio_id", "maquina_id", "identificador", "nif_adquirente", "revisada",
+  "empresa_id", "predio_id", "maquina_id", "identificador", "nif_adquirente", "revisada", "tipo_doc",
 ] as const;
 
 export const ROTULO_CAMPO: Record<string, string> = {
   fornecedor: "Fornecedor", nif_fornecedor: "NIF do fornecedor", numero: "Nº da fatura", data: "Data", total: "Total",
   iva: "IVA", categoria: "Categoria", empresa_id: "Empresa", predio_id: "Prédio", maquina_id: "Máquina",
-  identificador: "Nº contador / cliente", nif_adquirente: "NIF do cliente", revisada: "Revista",
+  identificador: "Nº contador / cliente", nif_adquirente: "NIF do cliente", revisada: "Revista", tipo_doc: "Tipo de documento",
 };
 
 export type Diferencas = Record<string, [unknown, unknown]>;

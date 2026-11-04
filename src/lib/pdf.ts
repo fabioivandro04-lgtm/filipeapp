@@ -3,6 +3,7 @@ import { PDFDocument, PDFName, PDFRawStream } from "pdf-lib";
 // A4 em pontos PDF; margem pequena para a fatura ocupar quase a página toda (o QR fica maior e mais legível)
 const A4 = { w: 595.28, h: 841.89 };
 const MARGEM = 18;
+const CRIADOR = "GESTAO APP";
 
 export type Imagem = { bytes: Uint8Array; mime: string };
 export const imagemConvertivel = (mime: string) => mime === "image/jpeg" || mime === "image/png";
@@ -14,7 +15,7 @@ export const imagemConvertivel = (mime: string) => mime === "image/jpeg" || mime
 export async function fotosParaPdf(imagens: Imagem[], titulo = "Fatura"): Promise<Uint8Array> {
   const pdf = await PDFDocument.create();
   pdf.setTitle(titulo);
-  pdf.setCreator("GESTAO APP");
+  pdf.setCreator(CRIADOR);
   for (const img of imagens) {
     const emb = img.mime === "image/png" ? await pdf.embedPng(img.bytes) : await pdf.embedJpg(img.bytes);
     // Página ao alto ou ao baixo conforme a foto
@@ -30,6 +31,8 @@ export async function fotosParaPdf(imagens: Imagem[], titulo = "Fatura"): Promis
 /** Fotos JPEG incorporadas num PDF nosso (uma por página), para voltar a ler uma fatura fotografada com IA. */
 export async function jpegsDoPdf(bytes: Uint8Array, max = 3): Promise<Uint8Array[]> {
   const doc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+  // Só nos PDFs feitos pela app a partir de fotos: num PDF de um fornecedor a imagem JPEG pode ser só o logótipo
+  if (doc.getCreator() !== CRIADOR) return [];
   const fotos: Uint8Array[] = [];
   for (const [, obj] of doc.context.enumerateIndirectObjects()) {
     if (fotos.length >= max) break;

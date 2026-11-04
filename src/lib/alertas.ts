@@ -32,7 +32,7 @@ export async function avaliar(d: Dados): Promise<string[]> {
   if (d.fornecedor && d.total && d.total > 0) {
     const h = await queryOne<{ n: number; media: number }>(
       `SELECT COUNT(*)::int AS n, COALESCE(AVG(total),0)::float8 AS media FROM faturas
-       WHERE LOWER(fornecedor) = LOWER(?) AND categoria = ? AND total IS NOT NULL AND id <> ? AND apagada_em IS NULL`,
+       WHERE LOWER(fornecedor) = LOWER(?) AND categoria = ? AND total IS NOT NULL AND COALESCE(tipo_doc, '') <> 'NC' AND id <> ? AND apagada_em IS NULL`,
       [d.fornecedor, d.categoria, excluir],
     );
     if (h && h.n >= 3 && h.media > 0 && d.total > 1.8 * h.media)

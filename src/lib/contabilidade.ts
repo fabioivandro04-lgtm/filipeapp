@@ -2,6 +2,7 @@ import { query, queryOne } from "./db";
 import { fotosParaPdf, imagemConvertivel } from "./pdf";
 import type { User } from "./auth";
 import { listarFaturas } from "./queries";
+import { mesLisboa } from "./format";
 
 const MES = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -9,8 +10,7 @@ export type FiltroPacote = { mes: string; empresaId?: number; estado: "pendentes
 
 /** Por defeito, o mês passado: é o que costuma ir para a contabilidade. */
 export function mesAnterior(): string {
-  const h = new Date();
-  return new Date(Date.UTC(h.getUTCFullYear(), h.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  return mesLisboa(-1);
 }
 
 export function lerFiltro(v: { mes?: unknown; empresa?: unknown; estado?: unknown }): FiltroPacote {
