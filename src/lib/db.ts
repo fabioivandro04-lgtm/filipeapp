@@ -131,6 +131,15 @@ const SCHEMA = `
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS leitura_em TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS apagada_em TEXT;
   ALTER TABLE faturas ADD COLUMN IF NOT EXISTS enviada_em TEXT;
+  -- Pagamento: paga_em (AAAA-MM-DD) vazio = por pagar; recibo_id = recibo/comprovativo associado.
+  -- Na primeira vez, as faturas-recibo (FR) já existentes ficam pagas na data da fatura (o documento já é o recibo).
+  DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'faturas' AND column_name = 'paga_em') THEN
+      ALTER TABLE faturas ADD COLUMN paga_em TEXT;
+      UPDATE faturas SET paga_em = COALESCE(data, substr(criado_em, 1, 10)) WHERE tipo_doc = 'FR';
+    END IF;
+  END $$;
+  ALTER TABLE faturas ADD COLUMN IF NOT EXISTS recibo_id INTEGER REFERENCES ficheiros(id) ON DELETE SET NULL;
   CREATE TABLE IF NOT EXISTS config (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
   CREATE TABLE IF NOT EXISTS historico (
     id SERIAL PRIMARY KEY,

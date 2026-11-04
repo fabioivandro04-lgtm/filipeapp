@@ -24,6 +24,7 @@ import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/pra
 import { fotosParaPdf, imagemConvertivel, jpegsDoPdf } from "@/lib/pdf";
 import { tipoReal } from "@/lib/ficheiros";
 import { cifrar } from "@/lib/segredo";
+import { hojeLisboa } from "@/lib/format";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -160,10 +161,12 @@ export async function carregarFatura(form: FormData): Promise<ResultadoUpload> {
 
   const fich = (await queryOne<{ id: number }>("INSERT INTO ficheiros (mime,dados) VALUES (?,?) RETURNING id", [file.type, bytes]))!;
   const nova = (await queryOne<{ id: number }>(
-    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,alerta,atcud,nif_adquirente,tipo_doc,qr_lido,leitura)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
+    `INSERT INTO faturas (criado_por,ficheiro_id,fornecedor,nif_fornecedor,numero,data,total,iva,categoria,empresa_id,alerta,atcud,nif_adquirente,tipo_doc,qr_lido,leitura,paga_em)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id`,
     [user.id, fich.id, fornecedor, nif, qr?.numero ?? null, qr?.data ?? null, qr?.total ?? null, qr?.totalIva ?? null, categoria, empresaId,
-      notas.length ? notas.join(" ") : null, qr?.atcud ?? null, qr?.nifAdquirente ?? null, qr?.tipo ?? null, qr ? 1 : 0, ia ? "pendente" : qr ? "qr" : "manual"],
+      notas.length ? notas.join(" ") : null, qr?.atcud ?? null, qr?.nifAdquirente ?? null, qr?.tipo ?? null, qr ? 1 : 0, ia ? "pendente" : qr ? "qr" : "manual",
+      // Fatura-recibo: o próprio documento prova o pagamento
+      qr?.tipo === "FR" ? qr.data ?? hojeLisboa() : null],
   ))!;
   if (ia) after(() => completarComIa(nova.id, paraLer).catch(() => query("UPDATE faturas SET leitura = ? WHERE id = ? AND leitura = 'pendente'", [qr ? "qr" : "falhou", nova.id])));
   await registar(user, nova.id, "criada", { fornecedor, numero: qr?.numero ?? null, total: qr?.total ?? null, qr: !!qr, ia });
@@ -283,6 +286,36 @@ export async function guardarFatura(id: number, form: FormData) {
     await query("UPDATE empresas SET nif = ? WHERE id = ? AND nif IS NULL AND NOT EXISTS (SELECT 1 FROM empresas e2 WHERE e2.nif = ?)", [nifAdquirente, empresaId, nifAdquirente]);
   revalidatePath("/", "layout");
   redirect("/");
+}
+
+// ---------- Pagamento e recibos ----------
+/**
+ * Marca a fatura como paga (na data indicada, por omissão hoje) e, se vier um ficheiro, associa-o como recibo.
+ * Também serve para juntar ou trocar o recibo de uma fatura que já estava paga.
+ */
+export async function marcarPaga(id: number, form: FormData) {
+  const u = await podeEditar();
+  const volta = (tipo: "ok" | "erro", msg: string): never => redirect(`/faturas/${id}?${tipo}=${encodeURIComponent(msg)}`);
+  if (!u) volta("erro", "O seu cargo não permite marcar pagamentos.");
+  const f = await queryOne<{ paga_em: string | null; recibo_id: number | null }>("SELECT paga_em, recibo_id FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!f) volta("erro", "Fatura não encontrada.");
+  const data = dataValida(form.get("paga_em")) ?? f!.paga_em ?? hojeLisboa();
+  const recibo = await guardarAnexo(form.get("recibo"));
+  if (recibo === "erro") volta("erro", "O recibo tem de ser PDF ou foto (JPEG, PNG, WebP), até 4 MB.");
+  await query("UPDATE faturas SET paga_em = ?, recibo_id = COALESCE(?, recibo_id) WHERE id = ?", [data, recibo, id]);
+  await registar(u, id, "paga", { paga_em: data, recibo: !!recibo });
+  revalidatePath("/", "layout");
+  volta("ok", recibo ? (f!.paga_em ? "Recibo associado." : "Fatura marcada como paga, com recibo.") : "Fatura marcada como paga.");
+}
+
+/** Volta a pôr a fatura «por pagar» (engano). O recibo deixa de estar associado. */
+export async function marcarPorPagar(id: number) {
+  const u = await podeEditar();
+  if (!u) return;
+  await query("UPDATE faturas SET paga_em = NULL, recibo_id = NULL WHERE id = ? AND apagada_em IS NULL", [id]);
+  await registar(u, id, "por_pagar");
+  revalidatePath("/", "layout");
+  redirect(`/faturas/${id}?ok=${encodeURIComponent("A fatura voltou a ficar por pagar.")}`);
 }
 
 // ---------- Aprovação das propostas (só admin) ----------

@@ -10,6 +10,7 @@ export type FaturaRow = {
   predio_nome: string | null; maquina_numero: string | null; identificador: string | null; itens: string | null;
   alerta: string | null; ficheiro_id: number | null; ficheiro_mime: string | null; revisada: number;
   atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; leitura: string; enviada_em: string | null; intragrupo: boolean;
+  paga_em: string | null; recibo_id: number | null; recibo_mime: string | null;
 };
 
 /** Todos os cargos vêem todas as faturas (menos as apagadas). O `u` fica para o caso de voltarmos a restringir. */
@@ -19,11 +20,12 @@ function visivel(_u: User, alias = "f") {
 
 const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome,
   (SELECT mime FROM ficheiros WHERE id = f.ficheiro_id) AS ficheiro_mime,
+  (SELECT mime FROM ficheiros WHERE id = f.recibo_id) AS recibo_mime,
   EXISTS (SELECT 1 FROM empresas e3 WHERE e3.nif IS NOT NULL AND e3.nif = f.nif_fornecedor AND e3.apagada_em IS NULL) AS intragrupo
   FROM faturas f JOIN users u ON u.id = f.criado_por
   LEFT JOIN predios p ON p.id = f.predio_id LEFT JOIN maquinas m ON m.id = f.maquina_id LEFT JOIN empresas e ON e.id = f.empresa_id`;
 
-export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean; pendentesEnvio?: boolean; limite?: number; saltar?: number };
+export type Filtro = { categoria?: string; q?: string; predio_id?: number; maquina_id?: number; empresa_id?: number; mes?: string; alerta?: boolean; pagamento?: "por-pagar" | "pagas"; pendentesEnvio?: boolean; limite?: number; saltar?: number };
 
 /** Leituras que passaram de 5 minutos já não vão terminar (o servidor cortou-as): passam a «falhou», para aparecerem em «Para rever». */
 export async function libertarLeiturasPresas(): Promise<void> {
@@ -40,6 +42,9 @@ export async function libertarLeiturasPresas(): Promise<void> {
  */
 export const VALOR = (alias = "f") => `(CASE WHEN ${alias}.tipo_doc = 'NC' THEN -ABS(${alias}.total) ELSE ${alias}.total END)`;
 
+/** Por pagar: sem data de pagamento. As notas de crédito não se pagam (descontam), por isso ficam de fora. */
+export const POR_PAGAR = (alias = "f") => `(${alias}.paga_em IS NULL AND COALESCE(${alias}.tipo_doc, '') <> 'NC')`;
+
 export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<FaturaRow[]> {
   await libertarLeiturasPresas();
   const v = visivel(u);
@@ -52,6 +57,8 @@ export async function listarFaturas(u: User, filtro: Filtro = {}): Promise<Fatur
   if (filtro.empresa_id) { where.push("f.empresa_id = ?"); args.push(filtro.empresa_id); }
   if (filtro.mes) { where.push("substr(COALESCE(f.data,f.criado_em),1,7) = ?"); args.push(filtro.mes); }
   if (filtro.pendentesEnvio) where.push("f.enviada_em IS NULL");
+  if (filtro.pagamento === "por-pagar") where.push(POR_PAGAR());
+  if (filtro.pagamento === "pagas") where.push("f.paga_em IS NOT NULL");
   if (filtro.alerta) where.push(`f.revisada = 0 AND (f.alerta IS NOT NULL OR f.leitura IN ('ia','falhou'))`);
   return query<FaturaRow>(`${SELECT} WHERE ${where.join(" AND ")} ORDER BY COALESCE(f.data, f.criado_em) DESC, f.id DESC
      LIMIT ${Math.min(filtro.limite ?? 500, 5000)} OFFSET ${Math.max(0, Math.floor(filtro.saltar ?? 0))}`, args);
@@ -66,10 +73,12 @@ export async function obterFatura(u: User, id: number): Promise<FaturaRow | unde
 export async function resumo(u: User) {
   const v = visivel(u);
   const mes = mesLisboa();
-  const r = (await queryOne<{ n: number; total: number; mes: number; alertas: number }>(
+  const r = (await queryOne<{ n: number; total: number; mes: number; alertas: number; por_pagar: number; por_pagar_total: number }>(
     `SELECT COUNT(*)::int AS n, COALESCE(SUM(${VALOR()}),0)::float8 AS total,
        COALESCE(SUM(CASE WHEN substr(COALESCE(data,criado_em),1,7) = ? THEN ${VALOR()} END),0)::float8 AS mes,
-       COALESCE(SUM(CASE WHEN revisada = 0 AND (alerta IS NOT NULL OR leitura IN ('ia','falhou')) THEN 1 ELSE 0 END),0)::int AS alertas
+       COALESCE(SUM(CASE WHEN revisada = 0 AND (alerta IS NOT NULL OR leitura IN ('ia','falhou')) THEN 1 ELSE 0 END),0)::int AS alertas,
+       COALESCE(SUM(CASE WHEN ${POR_PAGAR()} THEN 1 ELSE 0 END),0)::int AS por_pagar,
+       COALESCE(SUM(CASE WHEN ${POR_PAGAR()} THEN f.total END),0)::float8 AS por_pagar_total
      FROM faturas f WHERE ${v.sql}`,
     [mes, ...v.args],
   ))!;

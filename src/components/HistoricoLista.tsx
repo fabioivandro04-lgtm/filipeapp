@@ -25,7 +25,7 @@ function acaoEntidade(acao: string): string | null {
 const ACAO: Record<string, string> = {
   leitura_ia: "(IA) leu os dados de", leitura_ia_falhou: "(IA) não conseguiu ler",
   criada: "criou a fatura", editada: "editou", apagada: "apagou a fatura", restaurada: "restaurou a fatura",
-  revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", copia: "descarregou uma cópia de segurança",
+  revertida: "desfez uma alteração", maquinas_importadas: "importou stock:", proposta: "propôs uma alteração a", proposta_aceite: "aceitou uma proposta de alteração a", proposta_rejeitada: "rejeitou uma proposta de alteração a", enviada: "enviou à contabilidade", paga: "marcou como paga", por_pagar: "voltou a pôr por pagar", copia: "descarregou uma cópia de segurança",
   sessao_entrou: "entrou na app", sessao_saiu: "saiu da app", utilizador_cargo: "mudou o cargo de", utilizador_senha: "redefiniu a palavra-passe de",
   utilizador_senha_propria: "alterou a própria palavra-passe", perfil_alterado: "mudou o nome:", definicoes_alertas: "alterou os alertas por email:",
   definicoes_email: "alterou o servidor de email:", definicoes_contabilidade: "alterou o email da contabilidade:", definicoes_ia: "mudou os modelos de IA:", alertas_enviados: "enviou os alertas por email:", documento_renovada: "renovou o prazo de",
@@ -71,6 +71,7 @@ export default function HistoricoLista({ registos, nomes, podeDesfazer, mostrarF
             {r.acao === "documento_renovada" && det && <p className="mt-1 text-slate-500">Validade: {dataPt(det.antes)} → <span className="font-medium">{dataPt(det.validade)}</span></p>}
             {(r.acao === "documento_criada" || r.acao === "documento_editada") && det?.validade && <p className="mt-1 text-slate-500">Válido até {dataPt(det.validade)}</p>}
             {r.acao.startsWith("aluguer_") && det?.valor != null && <p className="mt-1 text-slate-500">{money(det.valor)}</p>}
+            {r.acao === "paga" && det?.paga_em && <p className="mt-1 text-slate-500">Paga em {dataPt(det.paga_em)}{det.recibo ? " · com recibo" : ""}</p>}
             {r.acao === "criada" && det && <p className="mt-1 text-slate-500">{det.fornecedor ?? "sem nome"} · {money(det.total)}{det.qr ? " · QR fiscal lido" : ""}</p>}
             {podeDesfazer && r.acao === "editada" && !desfeitos.has(r.id) && r.fatura_apagada === null && (
               <form action={reverterAlteracao.bind(null, r.id)} className="mt-2"><button className="btn-ghost px-3 py-1 text-xs">Desfazer esta alteração</button></form>

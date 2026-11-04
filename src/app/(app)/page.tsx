@@ -13,20 +13,21 @@ import { Suspense } from "react";
 // Faturas por página na lista (com 700 a 2000 por mês, mostrar tudo de uma vez tornava a página lenta e escondia as antigas)
 const POR_PAGINA = 100;
 
-export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string; pagina?: string }> }) {
+export default async function Home({ searchParams }: { searchParams: Promise<{ categoria?: string; q?: string; alerta?: string; empresa?: string; mes?: string; pagamento?: string; pagina?: string }> }) {
   const user = await requireUser();
   const sp = await searchParams;
   const empresaId = Number(sp.empresa) || undefined;
   const mes = sp.mes && /^\d{4}-(0[1-9]|1[0-2])$/.test(sp.mes) ? sp.mes : undefined;
+  const pagamento = sp.pagamento === "por-pagar" || sp.pagamento === "pagas" ? sp.pagamento : undefined;
   const pagina = Math.max(1, Math.floor(Number(sp.pagina) || 1));
   const [lidas, r, empresas] = await Promise.all([
     // Pede uma a mais para saber se há página seguinte
-    listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1", empresa_id: empresaId, mes, limite: POR_PAGINA + 1, saltar: (pagina - 1) * POR_PAGINA }),
+    listarFaturas(user, { categoria: sp.categoria, q: sp.q, alerta: sp.alerta === "1", empresa_id: empresaId, mes, pagamento, limite: POR_PAGINA + 1, saltar: (pagina - 1) * POR_PAGINA }),
     resumo(user), todasEmpresas(),
   ]);
   const haMais = lidas.length > POR_PAGINA;
   const faturas = lidas.slice(0, POR_PAGINA);
-  const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q, empresa: empresaId ? String(empresaId) : undefined, mes }).filter(([, v]) => v) as [string, string][]).toString();
+  const qs = new URLSearchParams(Object.entries({ categoria: sp.categoria, q: sp.q, empresa: empresaId ? String(empresaId) : undefined, mes, pagamento }).filter(([, v]) => v) as [string, string][]).toString();
   const ligacaoPagina = (n: number) => {
     const p = new URLSearchParams(qs);
     if (sp.alerta === "1") p.set("alerta", "1");
@@ -43,11 +44,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
         {editaDireto(user) && <form action={criarFaturaManual}><button className="btn-ghost">+ Fatura manual</button></form>}
       </PageHeader>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat rotulo="Este mês" valor={money(r.mes)} />
         <Stat rotulo="Total geral" valor={money(r.total)} />
         <Stat rotulo="Faturas" valor={String(r.n)} />
         <Link href="/alertas"><Stat rotulo="Para rever" valor={String(r.alertas)} destaque={r.alertas > 0} /></Link>
+        <Link href="/?pagamento=por-pagar" className="col-span-2 md:col-span-1"><Stat rotulo={`Por pagar (${r.por_pagar})`} valor={money(r.por_pagar_total)} destaque={r.por_pagar > 0} /></Link>
       </div>
 
       {r.porCategoria.length > 1 && (
@@ -70,9 +72,14 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ c
           <option value="">Todas as empresas</option>
           {empresas.map((e) => <option key={e.id} value={e.id}>{e.nome}</option>)}
         </select>
+        <select name="pagamento" defaultValue={pagamento ?? ""} className="field sm:max-w-[12rem]" aria-label="Pagamento">
+          <option value="">Pagas e por pagar</option>
+          <option value="por-pagar">Por pagar</option>
+          <option value="pagas">Pagas</option>
+        </select>
         <input type="month" name="mes" defaultValue={mes ?? ""} className="field sm:max-w-[11rem]" aria-label="Mês" />
         <button className="btn-ghost">Filtrar</button>
-        {(sp.q || sp.categoria || sp.alerta || sp.empresa || sp.mes) && <Link href="/" className="btn-ghost">Limpar</Link>}
+        {(sp.q || sp.categoria || sp.alerta || sp.empresa || sp.mes || pagamento) && <Link href="/" className="btn-ghost">Limpar</Link>}
       </form>
 
       <FaturasLista faturas={faturas} />

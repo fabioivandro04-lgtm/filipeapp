@@ -7,9 +7,11 @@ export async function GET(req: Request) {
   if (!u) return new Response("Não autenticado", { status: 401 });
   const sp = new URL(req.url).searchParams;
   const mes = sp.get("mes") ?? "";
+  const pag = sp.get("pagamento");
   const rows = await listarFaturas(u, {
     categoria: sp.get("categoria") ?? undefined, q: sp.get("q") ?? undefined,
-    empresa_id: Number(sp.get("empresa")) || undefined, mes: /^\d{4}-(0[1-9]|1[0-2])$/.test(mes) ? mes : undefined, limite: 5000,
+    empresa_id: Number(sp.get("empresa")) || undefined, mes: /^\d{4}-(0[1-9]|1[0-2])$/.test(mes) ? mes : undefined,
+    pagamento: pag === "por-pagar" || pag === "pagas" ? pag : undefined, limite: 5000,
   });
   return new Response(new Uint8Array(await excelFaturas(rows)), {
     headers: {

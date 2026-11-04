@@ -28,6 +28,7 @@ export async function excelFaturas(rows: FaturaRow[], prefixoFicheiro?: string):
     { header: "Máquina", key: "maquina_numero", width: 10 },
     { header: "Total", key: "total", width: 12, style: { numFmt: '#,##0.00 "€"' } },
     { header: "IVA", key: "iva", width: 11, style: { numFmt: '#,##0.00 "€"' } },
+    { header: "Paga em", key: "paga_em", width: 12 },
     { header: "Carregada por", key: "criado_por_nome", width: 18 },
     ...(prefixoFicheiro !== undefined ? [{ header: "Ficheiro", key: "ficheiro", width: 48 }] : []),
   ];
