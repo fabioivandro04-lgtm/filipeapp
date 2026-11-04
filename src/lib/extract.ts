@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CATEGORIAS } from "./db";
+import { idAnthropic, modelosDaTarefa } from "./modelos-ia";
 
 /** Aceita número ou texto («1 234,56»); o resto vira null. Os modelos gratuitos nem sempre respeitam o tipo pedido. */
 const numero = z.preprocess((v) => {
@@ -51,9 +52,6 @@ function fornecedor(): Fornecedor {
 export const extracaoDisponivel = () => fornecedor() !== null;
 export const nomeFornecedorIa = () => fornecedor();
 
-/** Modelos pela ordem de preferência (se um falhar ou demorar, experimenta-se o seguinte). Por omissão, só gratuitos com visão. */
-const MODELOS_PADRAO = "google/gemma-4-31b-it:free,google/gemma-4-26b-a4b-it:free,dots-studio/dots-3-note-preview:free";
-const modelosOpenRouter = (forte = false) => ((forte && process.env.AI_MODEL_FORTE) || process.env.AI_MODEL || MODELOS_PADRAO).split(",").map((m) => m.trim()).filter(Boolean).slice(0, 3);
 
 /** Primeiro objeto JSON do texto (os modelos às vezes rodeiam-no de ```json ... ``` ou cortam-no a meio). */
 function jsonDoTexto(t: string): unknown {
@@ -159,7 +157,7 @@ async function pedidoOpenRouter(modelo: string, conteudo: unknown[], tempoMs: nu
 /** Tempo máximo de uma leitura (todas as tentativas), abaixo do maxDuration das páginas (300 s). */
 export const TEMPO_LEITURA_MS = 240_000;
 
-async function viaOpenRouter(paginas: Pagina[], forte: boolean, ate: number): Promise<FaturaExtraida> {
+async function viaOpenRouter(paginas: Pagina[], modelos: string[], ate: number): Promise<FaturaExtraida> {
   const conteudo: unknown[] = paginas.map((p) =>
     p.mime === "application/pdf"
       ? { type: "file", file: { filename: "fatura.pdf", file_data: `data:application/pdf;base64,${p.bytes.toString("base64")}` } }
@@ -168,7 +166,6 @@ async function viaOpenRouter(paginas: Pagina[], forte: boolean, ate: number): Pr
   conteudo.push({ type: "text", text: `${PROMPT}\n\n${FORMATO_JSON}` });
   // Um modelo de cada vez: o «models» do OpenRouter só passa ao seguinte se o erro vier antes do 200,
   // e com os gratuitos o erro costuma vir depois (dentro do corpo), o que dava «A IA não respondeu (200: …)».
-  const modelos = modelosOpenRouter(forte);
   const falhas: FalhaIa[] = [];
   for (const [i, modelo] of modelos.entries()) {
     const resta = ate - Date.now();
@@ -189,7 +186,7 @@ async function viaOpenRouter(paginas: Pagina[], forte: boolean, ate: number): Pr
   throw new Error(`A IA não conseguiu ler a fatura (${detalhe.slice(0, 300)}). Use «Ler outra vez» ou preencha à mão.`);
 }
 
-async function viaAnthropic(paginas: Pagina[]): Promise<FaturaExtraida> {
+async function viaAnthropic(paginas: Pagina[], modelo: string): Promise<FaturaExtraida> {
   const client = new Anthropic();
   const fontes = paginas.map((p) => {
     const b64 = p.bytes.toString("base64");
@@ -198,7 +195,7 @@ async function viaAnthropic(paginas: Pagina[]): Promise<FaturaExtraida> {
       : ({ type: "image", source: { type: "base64", media_type: p.mime as "image/jpeg" | "image/png" | "image/webp" | "image/gif", data: b64 } } as const);
   });
   const res = await client.messages.parse({
-    model: "claude-opus-5-5",
+    model: modelo,
     max_tokens: 16000,
     output_config: { effort: "medium", format: zodOutputFormat(Fatura) },
     messages: [{ role: "user", content: [...fontes, { type: "text", text: PROMPT }] }],
@@ -207,10 +204,19 @@ async function viaAnthropic(paginas: Pagina[]): Promise<FaturaExtraida> {
   return res.parsed_output;
 }
 
-/** Há um modelo mais forte configurado (AI_MODEL_FORTE) para uma segunda leitura quando a primeira não passa nas validações. */
-export const temModeloForte = () => fornecedor() === "openrouter" && Boolean(process.env.AI_MODEL_FORTE);
+/** Há um modelo para a 2.ª leitura (Definições → Modelos de IA, ou AI_MODEL_FORTE), usada quando a 1.ª não passa nas validações. */
+export async function temModeloForte(): Promise<boolean> {
+  return fornecedor() !== null && (await modelosDaTarefa("leitura_forte")).modelos.length > 0;
+}
 
-/** Lê uma fatura (um PDF, ou uma ou mais fotos) com o fornecedor de IA configurado. `forte`: usa AI_MODEL_FORTE; `ate`: hora limite (ms). */
+/** Lê uma fatura (um PDF, ou uma ou mais fotos) com o modelo escolhido para a tarefa. `forte`: 2.ª leitura; `ate`: hora limite (ms). */
 export async function extrairFatura(paginas: Pagina[], forte = false, ate = Date.now() + TEMPO_LEITURA_MS): Promise<FaturaExtraida> {
-  return fornecedor() === "anthropic" ? viaAnthropic(paginas) : viaOpenRouter(paginas, forte, ate);
+  const { modelos } = await modelosDaTarefa(forte ? "leitura_forte" : "leitura");
+  if (fornecedor() === "anthropic") {
+    // Com a chave direta da Anthropic só servem modelos Claude; sem um Claude escolhido, usa o Opus.
+    const claude = modelos.map(idAnthropic).find(Boolean);
+    return viaAnthropic(paginas, claude ?? "claude-opus-5-5");
+  }
+  if (!modelos.length) throw new Error("Não há modelo de IA escolhido para esta tarefa (Definições → Modelos de IA).");
+  return viaOpenRouter(paginas, modelos, ate);
 }

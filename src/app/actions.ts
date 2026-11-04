@@ -12,12 +12,13 @@ import { carregarFicheiro, faturasDoPacote, lerFiltro, marcarComoEnviadas, paraQ
 import { emailConfigurado, enviarEmail, listaEmails, type Anexo } from "@/lib/email";
 import { enviarAlertas, FREQUENCIAS, guardarDefinicoesAlertas, lerDefinicoesAlertas, TIPOS_ALERTA, type Frequencia, type TipoAlerta } from "@/lib/alertas-email";
 import { excelFaturas, nomeFicheiro } from "@/lib/excel";
-import { guardarConfig } from "@/lib/config";
+import { guardarConfig, lerConfig } from "@/lib/config";
 import { CAMPOS_EDITAVEIS, diferencas, registar, type Diferencas } from "@/lib/historico";
 import { nifValido } from "@/lib/nif";
 import { descricaoDe, ESTADOS, lerFicheiroStock, planear, ROTULO_CAMPO, type Estado, type EstadoFolha, type Existente, type Plano } from "@/lib/stock";
 import { maquinaPorNumero, maquinasExistentes } from "@/lib/queries";
 import { extracaoDisponivel, type Pagina } from "@/lib/extract";
+import { conferirModelos, DESLIGADO, idValido, LISTA_TAREFAS, listaModelos, TAREFAS_IA, type TarefaIa } from "@/lib/modelos-ia";
 import { avisosFatura, completarComIa } from "@/lib/leitura-ia";
 import { ROTULO_DOCUMENTO, TIPOS_DOCUMENTO, type TipoDocumento } from "@/lib/prazos";
 import { fotosParaPdf, imagemConvertivel, jpegsDoPdf } from "@/lib/pdf";
@@ -918,6 +919,38 @@ export async function testarEmail() {
     voltarDefinicoes("erro", `O envio falhou: ${(e as Error).message}`, "email");
   }
   voltarDefinicoes("ok", `Email de teste enviado para ${para.join(", ")}.`, "email");
+}
+
+/** Modelo de IA de cada tarefa. Vazio: fica o da Vercel (AI_MODEL…); «-»: desligado (só para a 2.ª leitura). As chaves não passam por aqui. */
+export async function guardarModelosIa(form: FormData) {
+  const u = await adminOuSai();
+  // Primeiro confere tudo, para não guardar só metade se uma tarefa tiver erro
+  const valores: [TarefaIa, string][] = [];
+  for (const t of LISTA_TAREFAS) {
+    const escolha = String(form.get(`modelo_${t}`) ?? "").trim();
+    let valor: string;
+    if (escolha === "" || (escolha === DESLIGADO && t === "leitura_forte")) valor = escolha;
+    else {
+      const ids = listaModelos(escolha === "outro" ? String(form.get(`outro_${t}`) ?? "") : escolha);
+      if (!ids.length) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: escreva o nome do modelo (p. ex. anthropic/claude-sonnet-5.5).`, "modelos-ia");
+      const mau = ids.find((id) => !idValido(id));
+      if (mau) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: «${mau}» não parece um modelo do OpenRouter (forma empresa/modelo).`, "modelos-ia");
+      const problema = await conferirModelos(ids, TAREFAS_IA[t].imagens);
+      if (problema) voltarDefinicoes("erro", `${TAREFAS_IA[t].nome}: ${problema}`, "modelos-ia");
+      valor = ids.join(",");
+    }
+    valores.push([t, valor]);
+  }
+  const mudancas: string[] = [];
+  for (const [t, valor] of valores) {
+    const antes = await lerConfig(`ia_modelo_${t}`);
+    if ((antes ?? "") === valor) continue;
+    await guardarConfig(`ia_modelo_${t}`, valor);
+    mudancas.push(`${TAREFAS_IA[t].nome} → ${valor === "" ? "o da Vercel" : valor === DESLIGADO ? "desligada" : valor}`);
+  }
+  if (mudancas.length) await registar(u, null, "definicoes_ia", { resumo: mudancas.join("; ") });
+  revalidatePath("/definicoes");
+  voltarDefinicoes("ok", mudancas.length ? "Modelos de IA guardados. As próximas leituras já os usam." : "Nada mudou.", "modelos-ia");
 }
 
 export async function guardarEmailContabilidade(form: FormData) {

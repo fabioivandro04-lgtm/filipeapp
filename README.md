@@ -51,6 +51,7 @@ Variáveis de ambiente:
 | `OPENROUTER_API_KEY` | Leitura automática por IA via OpenRouter (fornecedor, NIF, nº, data, total, IVA, categoria, artigos). Sem chave de IA o QR fiscal continua a funcionar. |
 | `AI_MODEL` | Opcional: até 3 modelos do OpenRouter, separados por vírgula (a ordem é a de preferência). Por omissão, modelos **gratuitos** com visão: servem para testes, **não** para faturas reais (os gratuitos podem registar os pedidos). Em produção usa-se `google/gemini-3.5-flash-lite` (≈ 0,2 cêntimos por fatura, 2–4 s) com `google/gemini-3.1-flash-lite` de reserva, e `AI_MODEL_FORTE=google/gemini-3.8-flash` para a segunda leitura. |
 | `AI_MODEL_FORTE` | Opcional: modelo mais forte para uma 2.ª leitura, só quando a 1.ª não passa nas validações (p. ex. `anthropic/claude-sonnet-5.5`). |
+| — | Os modelos de cada tarefa também se escolhem na app, em **Definições → Modelos de IA** (só administradores). O que lá se escolher vale mais do que `AI_MODEL`/`AI_MODEL_FORTE`; «Predefinição da Vercel» volta a usar estas variáveis. As chaves (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`) ficam sempre na Vercel. |
 | `AI_PROVIDER` | Opcional: `openrouter` ou `anthropic` (por omissão, o que tiver chave). |
 | `ANTHROPIC_API_KEY` | Alternativa: leitura direta pela API da Anthropic. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Envio de email à contabilidade. Gmail: `smtp.gmail.com`, porta `465`, palavra-passe de aplicação. |

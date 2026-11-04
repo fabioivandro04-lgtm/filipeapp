@@ -53,7 +53,7 @@ export async function completarComIa(faturaId: number, paginas: Pagina[]): Promi
     // Conta validações falhadas e campos essenciais por ler: se houver, vale a pena uma segunda leitura com o modelo mais forte
     const problemas = (x: FaturaExtraida) => validarFatura({ nif: x.nif_fornecedor, data: dataOk(x.data), total: x.total, iva: x.iva, itens: x.itens }).length + (x.fornecedor ? 0 : 1) + (x.numero ? 0 : 1);
     // Segunda leitura com o modelo mais forte, só quando a primeira não passa nas validações
-    if (problemas(d) > 0 && temModeloForte() && ate - Date.now() > 30_000) {
+    if (problemas(d) > 0 && (await temModeloForte()) && ate - Date.now() > 30_000) {
       try { const d2 = await extrairFatura(paginas, true, ate); if (problemas(d2) <= problemas(d)) d = d2; } catch { /* fica a primeira */ }
     }
   } catch (e) {
