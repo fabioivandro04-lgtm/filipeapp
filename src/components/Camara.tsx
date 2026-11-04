@@ -1,14 +1,14 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import jsQR from "jsqr";
 import { pareceQrFiscal } from "@/lib/qr";
+import { aparelhoFraco, detetorNativo, lerJsQr, lerNativo, memorizarQr } from "@/lib/leitor-qr";
 
 type ImageCaptureLike = { takePhoto: (o?: { imageWidth?: number }) => Promise<Blob>; getPhotoCapabilities?: () => Promise<{ imageWidth?: { max?: number } }> };
 type Caps = MediaTrackCapabilities & { torch?: boolean; focusMode?: string[]; zoom?: { min: number; max: number; step: number } };
 type Aviso = "luz" | "foco" | "qr" | null;
 
-const LADO_MAX = 4096; // lado maior da foto final
+const LADO_MAX = 3000; // lado maior da foto final (o envio nunca guarda mais do que isto)
 const LIMIAR_LUZ = 70; // luminosidade média (0-255) abaixo da qual a foto sai escura
 
 /** Luminosidade média e nitidez (variância do Laplaciano) da zona central de uma imagem. */
@@ -68,12 +68,21 @@ export default function Camara({ aberta, modo, onFoto, onFechar, onSemCamara }: 
     (async () => {
       if (!navigator.mediaDevices?.getUserMedia) { semCamara.current(); return; }
       let s: MediaStream | null = null;
-      // Do melhor para o mais simples: 4K, depois Full HD, depois o que o aparelho der
-      for (const v of [
-        { facingMode: { ideal: "environment" }, width: { ideal: 3840 }, height: { ideal: 2160 } },
-        { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
-        { facingMode: "environment" },
-      ] as MediaTrackConstraints[]) {
+      // O vídeo serve só para ver e ler o QR. Onde há ImageCapture (Chrome/Android), a foto sai do sensor em resolução total,
+      // por isso o vídeo pode ser leve: 4K em direto é o que mais faz «engasgar» um telemóvel fraco.
+      // Sem ImageCapture (iPhone) a foto é um fotograma do vídeo, por isso aí pede-se mais resolução.
+      const fotoDoSensor = "ImageCapture" in window;
+      const fps = { ideal: 30, max: 30 };
+      const env = { ideal: "environment" };
+      const tentativas: MediaTrackConstraints[] = fotoDoSensor
+        ? (aparelhoFraco()
+          ? [{ facingMode: env, width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: fps }]
+          : [{ facingMode: env, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: fps }])
+        : [
+          ...(aparelhoFraco() ? [] : [{ facingMode: env, width: { ideal: 3840 }, height: { ideal: 2160 }, frameRate: fps }]),
+          { facingMode: env, width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: fps },
+        ];
+      for (const v of [...tentativas, { facingMode: "environment" }] as MediaTrackConstraints[]) {
         try { s = await navigator.mediaDevices.getUserMedia({ video: v, audio: false }); break; } catch { /* tenta a seguinte */ }
       }
       if (!s) { semCamara.current(); return; }
@@ -114,6 +123,8 @@ export default function Camara({ aberta, modo, onFoto, onFechar, onSemCamara }: 
       const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.92));
       if (!blob) return;
       const f = new File([blob], `fatura-${Date.now()}.jpg`, { type: "image/jpeg" });
+      // O QR que estava à vista neste instante é o desta foto: o ecrã de captura já não o precisa de procurar
+      if (visto.current && Date.now() - visto.current.em < 700) memorizarQr(f, visto.current.texto);
       setFlash(true); setTimeout(() => setFlash(false), 140);
       setFotos((n) => n + 1);
       setMiniatura((antes) => { if (antes) URL.revokeObjectURL(antes); return URL.createObjectURL(blob); });
@@ -125,42 +136,59 @@ export default function Camara({ aberta, modo, onFoto, onFechar, onSemCamara }: 
     }
   }, [modo, onFoto, onFechar]);
 
-  // Análise em direto: luz, nitidez e QR fiscal
+  // Análise em direto: luz, nitidez e QR fiscal.
+  // Cada volta só começa quando a anterior acaba (num telemóvel lento as voltas não se acumulam),
+  // o QR é lido pelo leitor nativo ou num worker (fora do ecrã) e a análise pára com a app em segundo plano.
   useEffect(() => {
     if (!aberta) return;
-    const cv = document.createElement("canvas"); // para medir luz e nitidez (sempre ao mesmo tamanho)
-    const cq = document.createElement("canvas"); // para procurar o QR (tamanho a rodar: um QR pequeno precisa de mais resolução)
-    let volta = 0;
-    const t = setInterval(() => {
-      const v = video.current;
-      if (!v || !v.videoWidth || ocupado.current) return;
-      const ctx = cv.getContext("2d", { willReadFrequently: true })!;
-      const w = 640, h = Math.round((640 * v.videoHeight) / v.videoWidth);
-      cv.width = w; cv.height = h;
-      ctx.drawImage(v, 0, 0, w, h);
-      const { luz, nitidez } = medir(ctx.getImageData(0, 0, w, h));
-      melhorNitidez.current = Math.max(nitidez, melhorNitidez.current * 0.97);
-      const lado = [1280, 800, 1920][volta++ % 3];
-      const esc = Math.min(1, lado / Math.max(v.videoWidth, v.videoHeight));
+    const fraco = aparelhoFraco();
+    const intervalo = fraco ? 750 : 450;
+    const cv = document.createElement("canvas"); // para medir luz e nitidez (pequeno: chega para comparar)
+    const cq = document.createElement("canvas"); // para o jsQR, quando não há leitor nativo
+    const ctx = cv.getContext("2d", { willReadFrequently: true })!;
+    const cqx = cq.getContext("2d", { willReadFrequently: true })!;
+    // Tamanhos a rodar para o jsQR: um QR pequeno precisa de mais resolução, mas em aparelhos fracos fica-se pelo leve
+    const lados = fraco ? [800, 1100] : [1280, 800, 1600];
+    let volta = 0, parado = false, espera: ReturnType<typeof setTimeout> | undefined;
+
+    const ler = async (v: HTMLVideoElement): Promise<string | null> => {
+      if (await detetorNativo()) return (await lerNativo(v)).find(pareceQrFiscal) ?? null;
+      const esc = Math.min(1, lados[volta++ % lados.length] / Math.max(v.videoWidth, v.videoHeight));
       const qw = Math.round(v.videoWidth * esc), qh = Math.round(v.videoHeight * esc);
-      cq.width = qw; cq.height = qh;
-      const cqx = cq.getContext("2d", { willReadFrequently: true })!;
+      if (cq.width !== qw || cq.height !== qh) { cq.width = qw; cq.height = qh; }
       cqx.drawImage(v, 0, 0, qw, qh);
-      const r = jsQR(cqx.getImageData(0, 0, qw, qh).data, qw, qh, { inversionAttempts: "dontInvert" });
-      // Cada tamanho vê coisas diferentes: o QR conta como visível durante 1,6 s depois de lido (evita piscar)
-      if (r && pareceQrFiscal(r.data)) visto.current = { texto: r.data, em: Date.now() };
-      const texto = visto.current && Date.now() - visto.current.em < 1600 ? visto.current.texto : null;
-      const nitida = nitidez >= 0.55 * melhorNitidez.current;
-      setQr(!!texto);
-      setAviso(luz < LIMIAR_LUZ ? "luz" : !nitida ? "foco" : !texto ? "qr" : null);
-      // Disparo automático: QR lido e imagem estável durante ~1 s, e ainda não fotografado
-      if (auto && texto && nitida && luz >= LIMIAR_LUZ && texto !== ultimoQr.current) {
-        if (++seguidas.current >= 2) { seguidas.current = 0; ultimoQr.current = texto; void tirar(); }
-      } else seguidas.current = 0;
-      // O QR saiu do enquadramento durante ~1,5 s: a próxima fatura pode ser fotografada
-      if (texto) semQr.current = 0; else if (++semQr.current >= 3) ultimoQr.current = null;
-    }, 500);
-    return () => clearInterval(t);
+      const t = await lerJsQr(cqx.getImageData(0, 0, qw, qh));
+      return t && pareceQrFiscal(t) ? t : null;
+    };
+
+    const passo = async () => {
+      const v = video.current;
+      try { if (v && v.videoWidth && !ocupado.current && !document.hidden) {
+        const w = 320, h = Math.round((320 * v.videoHeight) / v.videoWidth);
+        if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+        ctx.drawImage(v, 0, 0, w, h);
+        const { luz, nitidez } = medir(ctx.getImageData(0, 0, w, h));
+        melhorNitidez.current = Math.max(nitidez, melhorNitidez.current * 0.97);
+        const lido = await ler(v);
+        if (parado) return;
+        // O QR conta como visível durante 1,6 s depois de lido (evita piscar)
+        if (lido) visto.current = { texto: lido, em: Date.now() };
+        const texto = visto.current && Date.now() - visto.current.em < 1600 ? visto.current.texto : null;
+        const nitida = nitidez >= 0.55 * melhorNitidez.current;
+        const novoAviso: Aviso = luz < LIMIAR_LUZ ? "luz" : !nitida ? "foco" : !texto ? "qr" : null;
+        setQr(!!texto);
+        setAviso(novoAviso);
+        // Disparo automático: QR lido e imagem estável em duas voltas seguidas, e ainda não fotografado
+        if (auto && texto && nitida && luz >= LIMIAR_LUZ && texto !== ultimoQr.current) {
+          if (++seguidas.current >= 2) { seguidas.current = 0; ultimoQr.current = texto; void tirar(); }
+        } else seguidas.current = 0;
+        // O QR saiu do enquadramento durante ~1,5 s: a próxima fatura pode ser fotografada
+        if (texto) semQr.current = 0; else if (++semQr.current >= 3) ultimoQr.current = null;
+      } } catch { /* uma volta falhada não pára a análise */ }
+      if (!parado) espera = setTimeout(() => void passo(), intervalo);
+    };
+    espera = setTimeout(() => void passo(), intervalo);
+    return () => { parado = true; clearTimeout(espera); };
   }, [aberta, auto, tirar]);
 
   // Limpa o estado quando a câmara fecha

@@ -1,10 +1,10 @@
-import jsQR from "jsqr";
 import { pareceQrFiscal } from "./qr";
+import { lerJsQr, lerNativo, qrConhecido } from "./leitor-qr";
 
-/** Devolve o texto do QR fiscal se aparecer na imagem, senão null. */
-function procurar(img: ImageData): string | null {
-  const r = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
-  return r && pareceQrFiscal(r.data) ? r.data : null;
+/** Devolve o texto do QR fiscal se aparecer na imagem, senão null (o jsQR corre fora do ecrã). */
+async function procurar(img: ImageData): Promise<string | null> {
+  const t = await lerJsQr(img, true);
+  return t && pareceQrFiscal(t) ? t : null;
 }
 
 function desenhar(fonte: CanvasImageSource, w: number, h: number) {
@@ -20,13 +20,16 @@ function desenhar(fonte: CanvasImageSource, w: number, h: number) {
 
 async function deImagem(file: File): Promise<string | null> {
   const bmp = await createImageBitmap(file);
+  // Primeiro o leitor nativo do telemóvel, quando existe: é muito mais rápido do que o jsQR
+  const nativo = (await lerNativo(bmp)).find(pareceQrFiscal);
+  if (nativo) return nativo;
   // Do menor para o maior e pára no primeiro que resulta: reduzir a foto elimina o ruído (e é mais rápido),
   // mas um QR pequeno numa foto grande precisa de mais resolução. Nunca usa o tamanho total (lento e pior).
   for (const max of [800, 1400, 2200]) {
     const esc = Math.min(1, max / Math.max(bmp.width, bmp.height));
     const w = Math.round(bmp.width * esc), h = Math.round(bmp.height * esc);
     const { ctx } = desenhar(bmp, w, h);
-    const t = procurar(ctx.getImageData(0, 0, w, h));
+    const t = await procurar(ctx.getImageData(0, 0, w, h));
     if (t) return t;
     if (esc === 1) break; // a imagem já é mais pequena do que este tamanho
   }
@@ -48,7 +51,7 @@ async function dePdf(file: File): Promise<string | null> {
       canvas.height = Math.round(vp.height);
       const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
       await page.render({ canvas, canvasContext: ctx, viewport: vp }).promise;
-      const t = procurar(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      const t = (await lerNativo(canvas)).find(pareceQrFiscal) ?? await procurar(ctx.getImageData(0, 0, canvas.width, canvas.height));
       if (t) return t;
     }
   } finally {
@@ -59,6 +62,8 @@ async function dePdf(file: File): Promise<string | null> {
 
 /** Lê o QR fiscal de uma foto ou PDF, no browser. Falhas nunca impedem o carregamento. */
 export async function lerQrDoFicheiro(file: File): Promise<string | null> {
+  const ja = qrConhecido(file); // lido em direto na câmara: não é preciso ler outra vez
+  if (ja) return ja;
   try {
     return file.type === "application/pdf" ? await dePdf(file) : await deImagem(file);
   } catch (e) {

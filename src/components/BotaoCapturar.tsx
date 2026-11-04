@@ -2,8 +2,11 @@
 import { useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { guardarCapturas } from "@/lib/capturas";
-import Camara from "./Camara";
+import dynamic from "next/dynamic";
 import Icone from "./Icone";
+
+// A câmara (e o leitor de QR) só é descarregada quando se abre: as outras páginas ficam mais leves
+const Camara = dynamic(() => import("@/components/Camara"), { ssr: false });
 
 /** Botão central da barra do telemóvel: abre a câmara própria e leva as fotos para o ecrã de captura. */
 export default function BotaoCapturar() {
