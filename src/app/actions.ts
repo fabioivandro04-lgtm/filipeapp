@@ -25,6 +25,8 @@ import { fotosParaPdf, imagemConvertivel, jpegsDoPdf } from "@/lib/pdf";
 import { tipoReal } from "@/lib/ficheiros";
 import { cifrar } from "@/lib/segredo";
 import { hojeLisboa } from "@/lib/format";
+import { apagarConta, enviarFatura, ePrograma, ErroMoloni, guardarConta, lerConta, ligada, PROGRAMAS, urlAutorizacao, type FaturaParaMoloni, type Programa } from "@/lib/moloni";
+import { redirectMoloni } from "@/lib/endereco";
 
 export async function entrar(_: string | null, form: FormData): Promise<string | null> {
   const ok = await login(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
@@ -994,4 +996,141 @@ export async function guardarEmailContabilidade(form: FormData) {
   await guardarConfig("email_contabilidade", emails.join(", "));
   await registar(u, null, "definicoes_contabilidade", { resumo: emails.join(", ") || "(vazio)" });
   voltarDefinicoes("ok", "Email da contabilidade guardado.", "contabilidade");
+}
+
+// ---------- Programas de faturação (Moloni / WinTouch) ----------
+const voltarMoloni = (empresaId: number, tipo: "ok" | "erro", msg: string): never =>
+  redirect(`/definicoes/moloni/${empresaId}?${tipo}=${encodeURIComponent(msg)}`);
+
+/** Para que programa vão as compras de cada empresa (Definições → Programas de faturação). */
+export async function guardarProgramasFaturacao(form: FormData) {
+  const u = await adminOuSai();
+  const empresas = await query<{ id: number; nome: string; faturacao: string | null }>("SELECT id, nome, faturacao FROM empresas WHERE apagada_em IS NULL");
+  const mudancas: string[] = [];
+  for (const e of empresas) {
+    const v = String(form.get(`faturacao_${e.id}`) ?? "");
+    const novo = ePrograma(v) ? v : null;
+    if ((e.faturacao ?? null) === novo) continue;
+    await query("UPDATE empresas SET faturacao = ? WHERE id = ?", [novo, e.id]);
+    mudancas.push(`${e.nome} → ${novo ? PROGRAMAS[novo] : "nenhum"}`);
+  }
+  if (mudancas.length) await registar(u, null, "definicoes_faturacao", { resumo: mudancas.join("; ") });
+  revalidatePath("/", "layout");
+  voltarDefinicoes("ok", mudancas.length ? "Programas de faturação guardados." : "Nada mudou.", "faturacao");
+}
+
+/** Guarda o Developer ID e a Client Secret e manda para a página do Moloni, onde se autoriza a app. */
+export async function ligarMoloni(empresaId: number, form: FormData) {
+  await adminOuSai();
+  const antes = await lerConta(empresaId);
+  const developerId = String(form.get("developer_id") ?? "").trim();
+  const secret = String(form.get("client_secret") ?? "").trim() || antes?.client_secret || "";
+  if (!developerId) voltarMoloni(empresaId, "erro", "Escreva o Developer ID (está no Moloni, em Configurações → Developers).");
+  if (!secret) voltarMoloni(empresaId, "erro", "Cole a Client Secret (aparece no Moloni depois de carregar em «Atualizar»).");
+  const redirectUri = await redirectMoloni();
+  const mesmaConta = antes?.developer_id === developerId;
+  await guardarConta(empresaId, { ...(mesmaConta ? antes : {}), developer_id: developerId, client_secret: secret, redirect_uri: redirectUri });
+  (await cookies()).set("moloni_ligar", String(empresaId), { httpOnly: true, sameSite: "lax", secure: redirectUri.startsWith("https"), maxAge: 900, path: "/" });
+  redirect(urlAutorizacao({ developer_id: developerId }, redirectUri));
+}
+
+export async function desligarMoloni(empresaId: number) {
+  const u = await adminOuSai();
+  await apagarConta(empresaId);
+  await registar(u, null, "moloni_desligado", { resumo: `empresa ${empresaId}` });
+  voltarMoloni(empresaId, "ok", "Ligação ao Moloni removida. As chaves deixaram de estar guardadas na app.");
+}
+
+/** Empresa do Moloni, série dos documentos e o artigo a usar em cada categoria. */
+export async function guardarOpcoesMoloni(empresaId: number, form: FormData) {
+  const u = await adminOuSai();
+  const conta = await lerConta(empresaId);
+  if (!conta || !ligada(conta)) voltarMoloni(empresaId, "erro", "Ligue primeiro a conta do Moloni.");
+  const par = (v: FormDataEntryValue | null) => {
+    const [id, ...nome] = String(v ?? "").split("|");
+    return Number(id) > 0 ? { id: Number(id), nome: nome.join("|") } : null;
+  };
+  const empresa = par(form.get("company"));
+  const serie = par(form.get("document_set"));
+  const artigos: Record<string, { id: number; nome: string }> = {};
+  for (const c of CATEGORIAS) { const a = par(form.get(`artigo_${c}`)); if (a) artigos[c] = a; }
+  const trocouEmpresa = !!empresa && empresa.id !== conta!.company_id;
+  await guardarConta(empresaId, {
+    ...conta!,
+    company_id: empresa?.id ?? conta!.company_id, company_nome: empresa?.nome ?? conta!.company_nome,
+    // Se mudou de empresa do Moloni, a série e os artigos antigos já não servem
+    document_set_id: trocouEmpresa ? undefined : serie?.id, document_set_nome: trocouEmpresa ? undefined : serie?.nome,
+    artigos: trocouEmpresa ? {} : artigos,
+  });
+  await registar(u, null, "definicoes_faturacao", { resumo: `Moloni da empresa ${empresaId}: série ${serie?.nome ?? "—"}, ${Object.keys(artigos).length} categorias com artigo` });
+  voltarMoloni(empresaId, "ok", trocouEmpresa ? "Empresa do Moloni mudada. Escolha agora a série e os artigos." : "Opções do Moloni guardadas.");
+}
+
+const voltarFatura = (id: number, tipo: "ok" | "erro", msg: string): never => redirect(`/faturas/${id}?${tipo}=${encodeURIComponent(msg)}#faturacao`);
+
+/** Muda o destino só desta fatura (vazio = o da empresa). */
+export async function guardarDestinoFatura(id: number, form: FormData) {
+  const u = await podeEditar();
+  if (!u) voltarFatura(id, "erro", "O seu cargo não permite mudar o destino.");
+  const v = String(form.get("destino") ?? "");
+  const destino = ePrograma(v) || v === "nenhum" ? v : null;
+  const antes = await queryOne<{ destino: string | null }>("SELECT destino FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!antes) voltarFatura(id, "erro", "Fatura não encontrada.");
+  if ((antes!.destino ?? null) === destino) voltarFatura(id, "ok", "Nada mudou.");
+  await query("UPDATE faturas SET destino = ? WHERE id = ?", [destino, id]);
+  await registar(u, id, "destino_mudado", { resumo: destino ? (destino === "nenhum" ? "nenhum" : PROGRAMAS[destino as Programa]) : "o da empresa" });
+  revalidatePath("/", "layout");
+  voltarFatura(id, "ok", "Destino guardado.");
+}
+
+/** Cria a fatura no Moloni da empresa, como rascunho (a contabilista confere e fecha lá). */
+export async function enviarParaMoloni(id: number) {
+  const u = await podeEditar();
+  if (!u) voltarFatura(id, "erro", "O seu cargo não permite enviar faturas.");
+  const f = await queryOne<FaturaParaMoloni & { empresa_id: number | null; destino_feito: string | null }>(
+    "SELECT id, fornecedor, nif_fornecedor, numero, data, total, iva, categoria, tipo_doc, empresa_id, destino_feito FROM faturas WHERE id = ? AND apagada_em IS NULL", [id]);
+  if (!f) voltarFatura(id, "erro", "Fatura não encontrada.");
+  if (f!.destino_feito) voltarFatura(id, "erro", "Esta fatura já foi lançada. Se a apagou no programa, carregue primeiro em «Anular lançamento».");
+  if (!f!.empresa_id) voltarFatura(id, "erro", "Escolha primeiro a empresa da fatura.");
+  // Marca já como «moloni» (com ref vazia) para dois cliques seguidos não criarem duas faturas
+  const reservada = await query("UPDATE faturas SET destino_feito = 'moloni', destino_em = ?, destino_erro = NULL WHERE id = ? AND destino_feito IS NULL RETURNING id",
+    [new Date().toISOString().slice(0, 19).replace("T", " "), id]);
+  if (!reservada.length) voltarFatura(id, "erro", "Esta fatura já está a ser enviada.");
+  let documentId: number;
+  try {
+    documentId = await enviarFatura(f!.empresa_id!, f!);
+  } catch (e) {
+    const msg = e instanceof ErroMoloni ? e.message : `Erro inesperado: ${(e as Error).message}`;
+    await query("UPDATE faturas SET destino_feito = NULL, destino_em = NULL, destino_erro = ? WHERE id = ?", [msg, id]);
+    revalidatePath("/", "layout");
+    voltarFatura(id, "erro", msg);
+  }
+  await query("UPDATE faturas SET destino_ref = ? WHERE id = ?", [String(documentId!), id]);
+  await registar(u, id, "moloni_enviada", { resumo: `documento ${documentId!} (rascunho)` });
+  revalidatePath("/", "layout");
+  voltarFatura(id, "ok", "Fatura criada no Moloni como rascunho. A contabilista só tem de a conferir e fechar lá.");
+}
+
+/** WinTouch ainda não tem ligação: marca-se à mão quando a fatura é lançada lá. */
+export async function marcarLancadaWintouch(id: number) {
+  const u = await podeEditar();
+  if (!u) voltarFatura(id, "erro", "O seu cargo não permite esta ação.");
+  const r = await query("UPDATE faturas SET destino_feito = 'wintouch', destino_em = ?, destino_ref = NULL, destino_erro = NULL WHERE id = ? AND destino_feito IS NULL AND apagada_em IS NULL RETURNING id",
+    [new Date().toISOString().slice(0, 19).replace("T", " "), id]);
+  if (!r.length) voltarFatura(id, "erro", "Esta fatura já estava marcada como lançada.");
+  await registar(u, id, "wintouch_lancada");
+  revalidatePath("/", "layout");
+  voltarFatura(id, "ok", "Marcada como lançada no WinTouch.");
+}
+
+/** Para quando o documento foi apagado no programa (ou foi marcado por engano): a fatura volta a «por lançar». */
+export async function anularLancamento(id: number) {
+  const u = await podeEditar();
+  if (!u) voltarFatura(id, "erro", "O seu cargo não permite esta ação.");
+  const f = await queryOne<{ destino_feito: string | null; destino_ref: string | null }>("SELECT destino_feito, destino_ref FROM faturas WHERE id = ?", [id]);
+  if (!f?.destino_feito) voltarFatura(id, "ok", "A fatura já estava por lançar.");
+  await query("UPDATE faturas SET destino_feito = NULL, destino_ref = NULL, destino_em = NULL WHERE id = ?", [id]);
+  await registar(u, id, "destino_anulado", { resumo: `${PROGRAMAS[f!.destino_feito as Programa] ?? f!.destino_feito}${f!.destino_ref ? ` · documento ${f!.destino_ref}` : ""}` });
+  revalidatePath("/", "layout");
+  voltarFatura(id, "ok", "Lançamento anulado. Se a fatura ainda existir no programa, apague-a lá também.");
 }

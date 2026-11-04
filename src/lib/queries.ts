@@ -11,6 +11,8 @@ export type FaturaRow = {
   alerta: string | null; ficheiro_id: number | null; ficheiro_mime: string | null; revisada: number;
   atcud: string | null; nif_adquirente: string | null; tipo_doc: string | null; qr_lido: number; leitura: string; enviada_em: string | null; intragrupo: boolean;
   paga_em: string | null; recibo_id: number | null; recibo_mime: string | null;
+  destino: string | null; destino_feito: string | null; destino_ref: string | null; destino_em: string | null; destino_erro: string | null;
+  empresa_faturacao: string | null;
 };
 
 /** Todos os cargos vêem todas as faturas (menos as apagadas). O `u` fica para o caso de voltarmos a restringir. */
@@ -18,7 +20,7 @@ function visivel(_u: User, alias = "f") {
   return { sql: `${alias}.apagada_em IS NULL`, args: [] as string[] };
 }
 
-const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome,
+const SELECT = `SELECT f.*, u.nome AS criado_por_nome, p.nome AS predio_nome, m.numero_interno AS maquina_numero, e.nome AS empresa_nome, e.faturacao AS empresa_faturacao,
   (SELECT mime FROM ficheiros WHERE id = f.ficheiro_id) AS ficheiro_mime,
   (SELECT mime FROM ficheiros WHERE id = f.recibo_id) AS recibo_mime,
   EXISTS (SELECT 1 FROM empresas e3 WHERE e3.nif IS NOT NULL AND e3.nif = f.nif_fornecedor AND e3.apagada_em IS NULL) AS intragrupo
@@ -110,7 +112,7 @@ export const opcoesMaquinas = () =>
   query<{ id: number; numero_interno: string; descricao: string | null }>("SELECT id, numero_interno, descricao FROM maquinas WHERE apagada_em IS NULL ORDER BY numero_interno");
 /** Uma máquina pelo id (inclui apagadas, para os links antigos continuarem a abrir). */
 export const maquinaPorId = (id: number) => queryOne<Maquina>("SELECT * FROM maquinas WHERE id = ?", [id]);
-export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null; apagada_em: string | null };
+export type Empresa = { id: number; nome: string; nif: string | null; morada: string | null; codigo_postal: string | null; localidade: string | null; apagada_em: string | null; faturacao?: string | null };
 export const todasEmpresas = (incluirApagadas = false) => query<Empresa>(`SELECT * FROM empresas ${ativo(incluirApagadas)} ORDER BY nome`);
 
 export function prediosComTotais(u: User) {
