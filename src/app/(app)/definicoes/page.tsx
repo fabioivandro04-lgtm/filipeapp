@@ -6,6 +6,7 @@ import { dataHoraPt } from "@/lib/format";
 import { enviarAlertasAgora, guardarAlertasEmail, guardarEmailContabilidade, guardarPerfil, guardarServidorEmail, testarEmail } from "@/app/actions";
 import FormSenha from "@/components/FormSenha";
 import MenuDefinicoes from "@/components/MenuDefinicoes";
+import InstalarApp from "@/components/InstalarApp";
 import { PageHeader } from "@/components/Ui";
 import Icone from "@/components/Icone";
 import Link from "next/link";
@@ -33,7 +34,7 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
   const [host, porta, smtpUser, from, pass, emailConta] = cfg;
   const viaAmbiente = smtp?.origem === "ambiente";
   const abas = [
-    { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" },
+    { id: "perfil", nome: "Perfil" }, { id: "seguranca", nome: "Palavra-passe" }, { id: "app", nome: "App no telemóvel", soNoBrowser: true },
     ...(admin ? [{ id: "alertas", nome: "Alertas por email" }, { id: "email", nome: "Servidor de email" }, { id: "contabilidade", nome: "Contabilidade" }, { id: "dados", nome: "Histórico, apagados e cópias" }] : []),
   ];
 
@@ -58,6 +59,8 @@ export default async function Definicoes({ searchParams }: { searchParams: Promi
         <Seccao id="seguranca" titulo="Palavra-passe" desc="Escolha uma palavra-passe que só você conheça. Ao mudar, as outras sessões abertas (noutros aparelhos) terminam.">
           <FormSenha />
         </Seccao>
+
+        <InstalarApp id="app" />
 
         {admin && (
           <Seccao id="alertas" titulo="Alertas por email" desc="Quem recebe um email com o que precisa de atenção. O envio automático é feito de manhã (cerca das 8h).">
